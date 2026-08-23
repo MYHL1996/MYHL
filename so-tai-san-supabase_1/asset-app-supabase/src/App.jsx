@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 import { supabase } from "./supabaseClient";
 import {
-  LayoutDashboard, Boxes, Users2, Wrench, History, FileText, Archive,
+  LayoutDashboard, Boxes, Users2, Wrench, History, FileText, Archive, Warehouse, Fuel, Cable, CircleDollarSign, UploadCloud, DownloadCloud,
   ClipboardList, UserCog, ScrollText, Search, RefreshCw, X, Plus,
   ChevronRight, Building2, ArrowLeftRight, ShieldCheck, Trash2, Pencil,
   ChevronDown, Package, Stamp, AlertCircle, Loader2, ClipboardCheck,
@@ -102,22 +102,32 @@ function exportExcel(filename, headers, rows) {
   XLSX.writeFile(wb, `${filename}.xlsx`);
 }
 
+function downloadExcelTemplate(filename, headers, sampleRows = []) {
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
+  ws["!cols"] = headers.map((h) => ({ wch: Math.max(14, String(h).length + 3) }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Mẫu nhập liệu");
+  XLSX.writeFile(wb, `${filename}.xlsx`);
+}
+
 const NAV = [
   { section: "TÀI SẢN", items: [
     { id: "overview", label: "Tổng quan", icon: LayoutDashboard },
     { id: "catalog", label: "Danh mục tài sản", icon: Boxes, badge: "assets" },
-    { id: "byEmployee", label: "Tài sản theo NV", icon: Users2 },
+    { id: "byProject", label: "Tài sản theo công trình", icon: Building2 },
     { id: "depreciation", label: "Khấu hao tài sản", icon: History },
     { id: "repair", label: "Sửa chữa", icon: Wrench },
     { id: "repairHistory", label: "Lịch sử sửa chữa", icon: ScrollText },
     { id: "liquidation", label: "Thanh lý", icon: Trash2 },
+    { id: "warehouse", label: "Kho — Nhập / Xuất / Tồn", icon: Warehouse },
+    { id: "costHistory", label: "Chi phí thiết bị", icon: CircleDollarSign },
   ]},
   { section: "CHỨNG TỪ", items: [
     { id: "minutes", label: "Biên bản", icon: FileText },
     { id: "transactions", label: "Lịch sử giao dịch", icon: ArrowLeftRight },
   ]},
   { section: "TỔ CHỨC", items: [
-    { id: "employees", label: "Nhân sự", icon: UserCog, badge: "employees" },
+    { id: "projects", label: "Công trình", icon: Building2, badge: "projects" },
     { id: "activityLog", label: "Nhật ký thao tác", icon: ClipboardList },
     { id: "settings", label: "Cài đặt", icon: SettingsIcon, adminOnly: true },
   ]},
@@ -152,17 +162,15 @@ const depreciationOf = (asset) => {
 /* ============================== SEED DATA ============================== */
 
 function seed() {
-  const employees = [
-    { id: "e1", name: "Trần Văn Phú", department: "IT", email: "phu.tran@congty.vn" },
-    { id: "e2", name: "Phạm Quốc Vương", department: "Vận hành", email: "vuong.pham@congty.vn" },
-    { id: "e3", name: "Tào Xuân Minh", department: "Kinh doanh", email: "minh.tao@congty.vn" },
-    { id: "e4", name: "Ngân Bảo", department: "Kế toán", email: "ngan.bao@congty.vn" },
-    { id: "e5", name: "Lê Thị Hạnh", department: "Nhân sự", email: "hanh.le@congty.vn" },
+  const projects = [
+    { id: "p1", commander: "Nguyễn Văn An", name: "Công trình mẫu A", address: "Hà Nội", workItem: "Hạng mục nền móng", startDate: "2026-01-01", endDate: "2026-12-31" },
+    { id: "p2", commander: "Trần Văn Bình", name: "Công trình mẫu B", address: "Bắc Giang", workItem: "Hạng mục kết cấu", startDate: "2026-03-01", endDate: "2026-10-31" },
   ];
 
   const mk = (code, name, category, cost, purchaseDate, life, status, empId, dept, serial) => ({
     id: uid("as"), code, name, category, cost, purchaseDate, usefulLifeMonths: life,
-    status, assignedTo: empId || null, department: dept || "IT", serial,
+    status, assignedTo: null, projectId: empId || null, department: dept || "Vận hành", serial,
+    assetGroup: "Thiết bị chính", ownership: "Công ty", quantity: 1,
     supplier: "Nhà cung cấp chưa ghi", warranty: true, warrantyEnd: "2027-03-01", note: "",
   });
 
@@ -183,7 +191,7 @@ function seed() {
 
   const transactions = [
     { id: uid("tx"), assetId: assets[1].id, type: "mua_sam", date: "2020-03-01", title: "Mua sắm", detail: "Mua từ nhà cung cấp chưa ghi", amount: 10000000 },
-    { id: uid("tx"), assetId: assets[1].id, type: "cap_phat", date: "2020-03-02", title: "Cấp phát", detail: `Cấp cho ${employees[0].name}`, amount: 0 },
+    { id: uid("tx"), assetId: assets[1].id, type: "cap_phat", date: "2020-03-02", title: "Cấp phát", detail: `Giao cho công trình ${projects[0].name}`, amount: 0 },
     { id: uid("tx"), assetId: assets[6].id, type: "sua_chua", date: "2026-06-10", title: "Gửi sửa chữa", detail: "Lỗi bàn phím, gửi bảo hành", amount: 800000 },
     { id: uid("tx"), assetId: assets[10].id, type: "thanh_ly", date: "2026-05-20", title: "Thanh lý", detail: "Thiết bị cũ, thanh lý thu hồi", amount: 3000000 },
   ];
@@ -197,7 +205,7 @@ function seed() {
   ];
 
   const minutes = [
-    { id: uid("bb"), assetId: assets[1].id, type: "Biên bản bàn giao", date: "2020-03-02", content: `Bàn giao ${assets[1].name} cho ${employees[0].name}`, status: "Đã ký" },
+    { id: uid("bb"), assetId: assets[1].id, type: "Biên bản bàn giao", date: "2020-03-02", content: `Bàn giao ${assets[1].name} cho ${projects[0].name}`, status: "Đã ký" },
   ];
 
   const activityLog = [
@@ -212,13 +220,29 @@ function seed() {
   };
 
   // Tài khoản đăng nhập giờ do Supabase Auth quản lý — không còn lưu trong app_data.
-  return { assets, employees, transactions, repairs, liquidations, minutes, activityLog, settings };
+  const warehouse = assets.map((a) => ({ id: uid("wh"), voucherNo: `PN-${String(a.purchaseDate || nowIso().slice(0,10)).replaceAll("-", "")}-OPEN`, assetId: a.id, type: "nhap", quantity: Number(a.quantity || 1), date: a.purchaseDate, unitCost: a.cost, note: "Tồn đầu kỳ", projectId: a.projectId || null, locationType: a.projectId ? "project" : "warehouse", locationName: a.projectId ? projects.find(p => p.id === a.projectId)?.name || "Kho trung tâm" : "Kho trung tâm", warehouseName: a.projectId ? "" : "Kho trung tâm", itemName: a.name, itemCode: a.code, category: a.category, assetGroup: a.assetGroup, ownership: a.ownership }));
+  return { assets, projects, transactions, repairs, liquidations, minutes, warehouse, costHistory: [], activityLog, settings };
 }
 
 // Fills in any fields missing from data saved by an older version of the app.
 function withDefaults(d) {
+  const legacyProjects = Array.isArray(d.projects) ? d.projects : (d.employees || []).map((e, i) => ({
+    id: e.id || `p_legacy_${i}`, commander: e.name || "", name: e.name || "Công trình cũ", address: "", workItem: "", startDate: "", endDate: ""
+  }));
+  const migratedAssets = (d.assets || []).map(a => ({
+    ...a,
+    projectId: a.projectId || a.assignedTo || null,
+    assetGroup: a.assetGroup || a.category || "Thiết bị chính",
+    ownership: a.ownership || "Công ty",
+    quantity: Number(a.quantity || 1)
+  }));
   return {
     ...d,
+    assets: migratedAssets,
+    projects: legacyProjects,
+    warehouse: (Array.isArray(d.warehouse) ? d.warehouse : migratedAssets.map(a => ({ id: uid("wh"), assetId: a.id, type: "nhap", quantity: Number(a.quantity || 1), date: a.purchaseDate || nowIso().slice(0,10), unitCost: Number(a.cost || 0), note: "Tồn đầu kỳ" }))).map((w, i) => { const a = migratedAssets.find(x => x.id === w.assetId); const pid = w.projectId || a?.projectId || null; const loc = w.locationName || (pid ? legacyProjects.find(p => p.id === pid)?.name : "Kho trung tâm") || "Kho trung tâm"; return { ...w, voucherNo: w.voucherNo || `PN-${String(w.date || nowIso().slice(0,10)).replaceAll("-", "")}-OPEN${String(i+1).padStart(3,"0")}`, projectId: pid, locationType: w.locationType || (pid ? "project" : "warehouse"), locationName: loc, warehouseName: w.warehouseName || (pid ? "" : loc), itemName: w.itemName || a?.name || "", itemCode: w.itemCode || a?.code || "", category: w.category || a?.category || "Khác", assetGroup: w.assetGroup || a?.assetGroup || "Thiết bị chính", ownership: w.ownership || a?.ownership || "Công ty" }; }),
+    costHistory: Array.isArray(d.costHistory) ? d.costHistory : [],
+    employees: undefined,
     settings: {
       companyName: "TÊN CÔNG TY",
       departments: [...DEPARTMENTS],
@@ -572,7 +596,7 @@ export default function AssetManagementApp() {
     return data.assets.filter((a) =>
       a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q) ||
       (a.serial || "").toLowerCase().includes(q) ||
-      (data.employees.find((e) => e.id === a.assignedTo)?.name || "").toLowerCase().includes(q)
+      (data.projects.find((e) => e.id === a.projectId)?.name || "").toLowerCase().includes(q)
     );
   }, [data, query]);
 
@@ -656,7 +680,7 @@ export default function AssetManagementApp() {
     return true;
   };
 
-  const empName = (id) => data.employees.find((e) => e.id === id)?.name || "—";
+  const projectName = (id) => data.projects.find((e) => e.id === id)?.name || "—";
   const assetsById = Object.fromEntries(data.assets.map((a) => [a.id, a]));
 
   const logAction = (list, action) => [...list, { id: uid("lg"), date: nowIso(), user: currentUser.name, action }];
@@ -669,7 +693,8 @@ export default function AssetManagementApp() {
     const asset = {
       id: uid("as"), code: form.code, name: form.name, category: form.category,
       cost: Number(form.cost) || 0, purchaseDate: form.purchaseDate, usefulLifeMonths: Number(form.usefulLifeMonths) || 36,
-      status: STATUS.UNUSED, assignedTo: null, department: form.department, serial: form.serial,
+      status: STATUS.UNUSED, assignedTo: null, projectId: form.projectId || null, department: form.department, serial: form.serial,
+      assetGroup: form.assetGroup || form.category, ownership: form.ownership || "Công ty", quantity: Number(form.quantity) || 1,
       supplier: form.supplier, warranty: !!form.warranty, warrantyEnd: form.warrantyEnd, note: form.note || "",
       customFields: { ...(form.customFields || {}) },
     };
@@ -684,6 +709,7 @@ export default function AssetManagementApp() {
   };
 
   const editAsset = (id, form) => {
+    if (!requireAdmin()) return;
     setData({
       ...data,
       assets: data.assets.map((a) => (a.id === id ? { ...a, ...form, cost: Number(form.cost) || 0, usefulLifeMonths: Number(form.usefulLifeMonths) || 36 } : a)),
@@ -692,14 +718,111 @@ export default function AssetManagementApp() {
     notify("Đã lưu thay đổi");
   };
 
-  const assignAsset = (id, empId, department) => {
+  const deleteAsset = (id) => {
+    if (!requireAdmin()) return;
     const asset = assetsById[id];
-    const tx = { id: uid("tx"), assetId: id, type: "cap_phat", date: nowIso().slice(0, 10), title: "Cấp phát", detail: `Cấp cho ${empName(empId)}`, amount: 0 };
+    if (!asset) return;
+    if (!window.confirm(`Xoá tài sản ${asset.code} — ${asset.name}?`)) return;
+    setData({ ...data, assets: data.assets.filter(a => a.id !== id), transactions: data.transactions.filter(t => t.assetId !== id), repairs: data.repairs.filter(r => r.assetId !== id), liquidations: data.liquidations.filter(r => r.assetId !== id), minutes: data.minutes.filter(m => m.assetId !== id), warehouse: data.warehouse.filter(w => w.assetId !== id), costHistory: data.costHistory.filter(c => c.assetId !== id), activityLog: logAction(data.activityLog, `Xoá tài sản ${asset.code}`) });
+    setSelectedAssetId(null); notify("Đã xoá tài sản");
+  };
+
+  const addWarehouseTx = (form) => {
+    const asset = assetsById[form.assetId];
+    if (!asset) { notify("Vui lòng chọn tài sản"); return; }
+    const qty = Number(form.quantity) || 0;
+    if (qty <= 0) { notify("Số lượng phải lớn hơn 0"); return; }
+    const unitCost = Number(form.unitCost) || 0;
+    const currentRows = data.warehouse || [];
+    const locationName = form.locationType === "project"
+      ? (data.projects.find(p => p.id === form.projectId)?.name || "")
+      : (form.warehouseName || "Kho trung tâm");
+    if (!locationName) { notify("Vui lòng chọn công trình hoặc nhập tên kho"); return; }
+    const prefix = form.type === "nhap" ? "PN" : "PX";
+    const dateKey = String(form.date || nowIso().slice(0,10)).slice(0,10).replaceAll("-", "");
+    const seq = currentRows.filter(w => String(w.voucherNo || "").startsWith(`${prefix}-${dateKey}-`)).length + 1;
+    const voucherNo = form.voucherNo?.trim() || `${prefix}-${dateKey}-${String(seq).padStart(3,"0")}`;
+    const tx = {
+      id: uid("wh"), voucherNo, assetId: asset.id, type: form.type, quantity: qty, date: form.date,
+      unitCost, total: qty * unitCost, unit: form.unit || "Cái", receiver: form.receiver || "", note: form.note || "",
+      category: asset.category || "Khác", assetGroup: asset.assetGroup || "Thiết bị chính", ownership: asset.ownership || "Công ty",
+      locationType: form.locationType || "project", locationName, warehouseName: form.locationType === "warehouse" ? locationName : "",
+      projectId: form.projectId || null, itemName: asset.name, itemCode: asset.code,
+    };
+    if (form.type === "xuat") {
+      const currentQty = currentRows.reduce((sum, w) => {
+        if (w.assetId !== asset.id) return sum;
+        const loc = w.locationName || (w.projectId ? projectName(w.projectId) : "Kho trung tâm");
+        if (loc !== locationName || String(w.date || "") > String(form.date || "")) return sum;
+        return sum + (w.type === "nhap" ? Number(w.quantity || 0) : -Number(w.quantity || 0));
+      }, 0);
+      if (qty > currentQty) { notify(`Không đủ tồn tại ${locationName}. ${asset.code} hiện còn ${currentQty} ${tx.unit}`); return; }
+    }
+    setData({ ...data, warehouse: [tx, ...currentRows], transactions: [{ id: uid("tx"), assetId: asset.id, type: form.type === "nhap" ? "nhap_kho" : "xuat_kho", date: form.date, title: `${form.type === "nhap" ? "Nhập kho" : "Xuất kho"} ${voucherNo}`, detail: `${asset.name} · ${locationName} · ${form.receiver || ""}`, amount: tx.total }, ...data.transactions], activityLog: logAction(data.activityLog, `${form.type === "nhap" ? "Nhập" : "Xuất"} ${voucherNo} — ${asset.code} — ${locationName}`) });
+    notify(`${form.type === "nhap" ? "Đã lập phiếu nhập" : "Đã lập phiếu xuất"} ${voucherNo}`);
+  };
+
+  const importWarehouseExcel = (file) => {
+    if (!requireAdmin()) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: "array" });
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+        if (!rows.length) return notify("File Excel không có dữ liệu");
+        const byCode = Object.fromEntries(data.assets.map(a => [String(a.code).trim().toLowerCase(), a]));
+        const byName = Object.fromEntries(data.assets.map(a => [String(a.name).trim().toLowerCase(), a]));
+        const imported = [];
+        const errors = [];
+        const existing = data.warehouse || [];
+        rows.forEach((r, i) => {
+          const rawType = String(r["Loại phiếu"] || "Nhập kho").trim().toLowerCase();
+          const type = rawType.includes("xuất") || rawType === "xuat" ? "xuat" : "nhap";
+          const code = String(r["Mã hàng"] || "").trim().toLowerCase();
+          const name = String(r["Tên tài sản"] || "").trim().toLowerCase();
+          const asset = byCode[code] || byName[name];
+          if (!asset) { errors.push(`Dòng ${i + 2}: không tìm thấy tài sản theo Mã hàng/Tên tài sản`); return; }
+          const qty = Number(r["Số lượng"] || 0);
+          if (qty <= 0) { errors.push(`Dòng ${i + 2}: số lượng không hợp lệ`); return; }
+          const unitCost = Number(r["Đơn giá"] || 0);
+          const date = String(r["Ngày tháng"] || nowIso().slice(0, 10)).slice(0, 10);
+          const locationText = String(r["Kho/Công trình"] || "").trim();
+          const project = data.projects.find(p => p.name.trim().toLowerCase() === locationText.toLowerCase());
+          const locationType = String(r["Loại địa điểm"] || "").toLowerCase().includes("kho") ? "warehouse" : (project ? "project" : "warehouse");
+          const locationName = project ? project.name : (locationText || "Kho trung tâm");
+          const prefix = type === "nhap" ? "PN" : "PX";
+          const dateKey = date.replaceAll("-", "");
+          const seq = [...existing, ...imported].filter(w => String(w.voucherNo || "").startsWith(`${prefix}-${dateKey}-`)).length + 1;
+          const voucherNo = String(r["Số phiếu"] || "").trim() || `${prefix}-${dateKey}-${String(seq).padStart(3,"0")}`;
+          imported.push({ id: uid("wh"), voucherNo, assetId: asset.id, type, quantity: qty, date, unitCost, total: qty * unitCost,
+            unit: String(r["Đơn vị tính"] || "Cái"), receiver: String(r["Người giao/nhận"] || ""), note: String(r["Ghi chú"] || ""),
+            category: asset.category || "Khác", assetGroup: asset.assetGroup || "Thiết bị chính", ownership: asset.ownership || "Công ty",
+            locationType, locationName, warehouseName: locationType === "warehouse" ? locationName : "", projectId: project?.id || null,
+            itemName: asset.name, itemCode: asset.code });
+        });
+        if (errors.length) notify(`Import ${imported.length} dòng; ${errors.length} dòng lỗi. ${errors[0]}`);
+        if (!imported.length) return;
+        setData({ ...data, warehouse: [...imported, ...existing], transactions: [...imported.map(tx => ({ id: uid("tx"), assetId: tx.assetId, type: tx.type === "nhap" ? "nhap_kho" : "xuat_kho", date: tx.date, title: `${tx.type === "nhap" ? "Nhập kho" : "Xuất kho"} ${tx.voucherNo}`, detail: `${tx.itemName} · ${tx.locationName} · ${tx.receiver}`, amount: tx.total })), ...data.transactions], activityLog: logAction(data.activityLog, `Import ${imported.length} phiếu kho từ Excel`) });
+        if (!errors.length) notify(`Đã import ${imported.length} phiếu kho`);
+      } catch (err) { notify("Không đọc được file Excel phiếu kho"); }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const addCostHistory = (form) => {
+    const item = { id: uid("cp"), assetId: form.assetId, type: form.type, date: form.date, amount: Number(form.amount)||0, description: form.description || "", vendor: form.vendor || "" };
+    setData({ ...data, costHistory: [item, ...data.costHistory], transactions: [{ id: uid("tx"), assetId: form.assetId, type: form.type, date: form.date, title: form.type, detail: form.description || "", amount: item.amount }, ...data.transactions], activityLog: logAction(data.activityLog, `Thêm chi phí ${form.type} cho ${assetsById[form.assetId]?.code || ""}`) });
+    notify("Đã lưu chi phí thiết bị");
+  };
+
+  const assignAsset = (id, projectId, department) => {
+    const asset = assetsById[id];
+    const tx = { id: uid("tx"), assetId: id, type: "cap_phat", date: nowIso().slice(0, 10), title: "Cấp phát", detail: `Giao cho công trình ${projectName(projectId)}`, amount: 0 };
     setData({
       ...data,
-      assets: data.assets.map((a) => (a.id === id ? { ...a, status: STATUS.ASSIGNED, assignedTo: empId, department } : a)),
+      assets: data.assets.map((a) => (a.id === id ? { ...a, status: STATUS.ASSIGNED, assignedTo: null, projectId, department } : a)),
       transactions: [tx, ...data.transactions],
-      activityLog: logAction(data.activityLog, `Cấp phát ${asset.code} cho ${empName(empId)}`),
+      activityLog: logAction(data.activityLog, `Giao ${asset.code} cho công trình ${projectName(projectId)}`),
     });
     notify("Đã cấp phát tài sản");
   };
@@ -767,11 +890,12 @@ export default function AssetManagementApp() {
     notify("Đã lập biên bản");
   };
 
-  const addEmployee = (form) => {
-    const emp = { id: uid("e"), name: form.name, department: form.department, email: form.email };
-    setData({ ...data, employees: [emp, ...data.employees], activityLog: logAction(data.activityLog, `Thêm nhân sự ${emp.name}`) });
-    notify("Đã thêm nhân sự");
+  const addProject = (form) => {
+    const project = { id: uid("p"), commander: form.commander, name: form.name, address: form.address, workItem: form.workItem, startDate: form.startDate, endDate: form.endDate };
+    setData({ ...data, projects: [project, ...data.projects], activityLog: logAction(data.activityLog, `Thêm công trình ${project.name}`) });
+    notify("Đã thêm công trình");
   };
+  const deleteProject = (id) => { if (!requireAdmin()) return; const p = data.projects.find(x => x.id === id); if (data.assets.some(a => a.projectId === id)) { notify("Không thể xoá công trình đang có tài sản"); return; } if (!window.confirm(`Xoá công trình ${p?.name || id}?`)) return; setData({ ...data, projects: data.projects.filter(x => x.id !== id), activityLog: logAction(data.activityLog, `Xoá công trình ${p?.name || id}`) }); notify("Đã xoá công trình"); };
 
   /* ---------- settings ---------- */
 
@@ -935,6 +1059,26 @@ export default function AssetManagementApp() {
     reader.readAsText(file);
   };
 
+  const importExcel = (file, kind) => {
+    if (!requireAdmin()) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: "array" });
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+        if (!rows.length) return notify("File Excel không có dữ liệu");
+        if (kind === "assets") {
+          const imported = rows.map((r,i)=>({ id: uid("as"), code: String(r["Mã quản lý"]||r.code||`IMP-${Date.now()}-${i}`), name: String(r["Tên tài sản"]||r.name||""), category: String(r["Loại"]||r.category||"Khác"), assetGroup: String(r["Nhóm tài sản"]||r.assetGroup||r["Loại"]||"Thiết bị chính"), ownership: String(r["Nguồn"]||r.ownership||"Công ty"), cost:Number(r["Nguyên giá"]||r.cost||0), purchaseDate:String(r["Ngày mua"]||r.purchaseDate||nowIso().slice(0,10)).slice(0,10), usefulLifeMonths:Number(r["Thời gian SD"]||r.usefulLifeMonths||36), status:STATUS.UNUSED, assignedTo:null, projectId:null, department:String(r["Bộ phận"]||"Vận hành"), serial:String(r["Serial"]||""), supplier:String(r["Nhà cung cấp"]||""), warranty:false, warrantyEnd:"", note:String(r["Ghi chú"]||""), quantity:Number(r["Số lượng"]||r.quantity||1), customFields:{} }));
+          const wh = imported.map(a=>({id:uid("wh"),assetId:a.id,type:"nhap",quantity:a.quantity||1,date:a.purchaseDate,unitCost:a.cost,note:"Nhập từ Excel"}));
+          setData({...data, assets:[...imported,...data.assets], warehouse:[...wh,...data.warehouse], activityLog:logAction(data.activityLog,`Import ${imported.length} tài sản từ Excel`)}); notify(`Đã import ${imported.length} tài sản`);
+        } else if (kind === "projects") {
+          const imported=rows.map(r=>({id:uid("p"),commander:String(r["Chỉ huy trưởng"]||r.commander||""),name:String(r["Tên công trình"]||r.name||""),address:String(r["Địa chỉ"]||r.address||""),workItem:String(r["Hạng mục thi công"]||r.workItem||""),startDate:String(r["Ngày bắt đầu"]||r.startDate||"").slice(0,10),endDate:String(r["Ngày kết thúc"]||r.endDate||"").slice(0,10)}));
+          setData({...data,projects:[...imported,...data.projects],activityLog:logAction(data.activityLog,`Import ${imported.length} công trình từ Excel`)}); notify(`Đã import ${imported.length} công trình`);
+        }
+      } catch(err){ notify("Không đọc được file Excel"); }
+    }; reader.readAsArrayBuffer(file);
+  };
+
   /* ---------- export ---------- */
 
   const doExportExcel = (filename, headers, rows) => {
@@ -975,22 +1119,29 @@ export default function AssetManagementApp() {
 
           <div className="flex-1 min-w-0 flex">
             <div className="flex-1 min-w-0 p-6 overflow-y-auto aa-scroll">
-              {active === "overview" && <Overview data={data} counts={counts} empName={empName} />}
+              {active === "overview" && <Overview data={data} counts={counts} projectName={projectName} />}
               {active === "catalog" && (
                 <AssetCatalog
-                  assets={filteredAssets} empName={empName} onSelect={setSelectedAssetId} selectedAssetId={selectedAssetId}
-                  onAdd={() => setModal({ type: "addAsset" })} customColumns={settings.customColumns}
+                  assets={filteredAssets} projectName={projectName} onSelect={setSelectedAssetId} selectedAssetId={selectedAssetId}
+                  onAdd={() => setModal({ type: "addAsset" })} customColumns={settings.customColumns} isAdmin={isAdmin} onDelete={deleteAsset}
                   onExportExcel={doExportExcel} onExportPdf={doExportPdf}
                 />
               )}
-              {active === "byEmployee" && <ByEmployee data={data} empName={empName} onSelect={(id) => { setActive("catalog"); setSelectedAssetId(id); }} />}
+              {active === "byProject" && <ByProject data={data} projectName={projectName} onSelect={(id) => { setActive("catalog"); setSelectedAssetId(id); }} />}
               {active === "depreciation" && <Depreciation assets={data.assets} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "repair" && <RepairView repairs={data.repairs.filter((r) => r.status === "Đang sửa")} assetsById={assetsById} onComplete={completeRepair} />}
               {active === "repairHistory" && <RepairHistory repairs={data.repairs} assetsById={assetsById} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "liquidation" && <LiquidationView liquidations={data.liquidations} assetsById={assetsById} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "minutes" && <MinutesView minutes={data.minutes} assetsById={assetsById} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "transactions" && <TransactionsView transactions={data.transactions} assetsById={assetsById} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
-              {active === "employees" && <EmployeesView employees={data.employees} assets={data.assets} onAdd={() => setModal({ type: "addEmployee" })} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
+{active === "warehouse" && <WarehouseHub
+                warehouse={data.warehouse || []} assets={data.assets} projects={data.projects} settings={settings}
+                onAdd={(type) => setModal({ type: type === "nhap" ? "warehouseIn" : "warehouseOut" })}
+                onExportExcel={doExportExcel} onExportPdf={doExportPdf}
+                onImport={importWarehouseExcel} isAdmin={isAdmin}
+              />}
+              {active === "costHistory" && <CostHistoryView costHistory={data.costHistory} assetsById={assetsById} onAdd={() => setModal({ type: "costHistory" })} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
+              {active === "projects" && <ProjectsView projects={data.projects} assets={data.assets} isAdmin={isAdmin} onDelete={deleteProject} onAdd={() => setModal({ type: "addProject" })} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "activityLog" && <ActivityLogView log={data.activityLog} />}
               {active === "settings" && isAdmin && (
                 <SettingsView
@@ -1003,7 +1154,7 @@ export default function AssetManagementApp() {
                   users={profiles} currentUser={currentUser} onSetUserRole={setUserRole} onSendPasswordReset={sendPasswordReset}
                   backups={backups}
                   onCreateBackup={createBackup} onRestoreBackup={restoreBackup} onDeleteBackup={deleteBackup}
-                  onDownloadBackupFile={downloadBackupFile} onRestoreFromFile={restoreFromFile}
+                  onDownloadBackupFile={downloadBackupFile} onRestoreFromFile={restoreFromFile} onImportExcel={(file, kind) => importExcel(file, kind)}
                 />
               )}
               {active === "settings" && !isAdmin && (
@@ -1019,7 +1170,7 @@ export default function AssetManagementApp() {
 
             {selectedAsset && active === "catalog" && (
               <AssetDetail
-                asset={selectedAsset} data={data} empName={empName} isAdmin={isAdmin} onClose={() => setSelectedAssetId(null)}
+                asset={selectedAsset} data={data} projectName={projectName} isAdmin={isAdmin} onDelete={deleteAsset} onClose={() => setSelectedAssetId(null)}
                 onAction={(type) => setModal({ type, assetId: selectedAsset.id })}
               />
             )}
@@ -1027,17 +1178,17 @@ export default function AssetManagementApp() {
         </div>
 
         {modal?.type === "addAsset" && (
-          <AssetFormModal title="Thêm tài sản mới" categories={settings.categories} departments={settings.departments} customColumns={settings.customColumns}
+          <AssetFormModal title="Thêm tài sản mới" categories={settings.categories} departments={settings.departments} projects={data.projects} customColumns={settings.customColumns}
             onClose={() => setModal(null)} onSubmit={(f) => { addAsset(f); setModal(null); }} />
         )}
         {modal?.type === "editAsset" && (
           <AssetFormModal title={`Sửa tài sản — ${assetsById[modal.assetId]?.code}`} initial={assetsById[modal.assetId]}
-            categories={settings.categories} departments={settings.departments} customColumns={settings.customColumns}
+            categories={settings.categories} departments={settings.departments} projects={data.projects} customColumns={settings.customColumns}
             onClose={() => setModal(null)} onSubmit={(f) => { editAsset(modal.assetId, f); setModal(null); }} />
         )}
         {modal?.type === "assign" && (
-          <AssignModal asset={assetsById[modal.assetId]} employees={data.employees} departments={settings.departments} onClose={() => setModal(null)}
-            onSubmit={(empId, dept) => { assignAsset(modal.assetId, empId, dept); setModal(null); }} />
+          <AssignModal asset={assetsById[modal.assetId]} projects={data.projects} departments={settings.departments} onClose={() => setModal(null)}
+            onSubmit={(projectId, dept) => { assignAsset(modal.assetId, projectId, dept); setModal(null); }} />
         )}
         {modal?.type === "transfer" && (
           <TransferModal asset={assetsById[modal.assetId]} departments={settings.departments} onClose={() => setModal(null)}
@@ -1055,9 +1206,15 @@ export default function AssetManagementApp() {
           <MinutesModal asset={assetsById[modal.assetId]} onClose={() => setModal(null)}
             onSubmit={(type, content) => { createMinutes(modal.assetId, type, content); setModal(null); }} />
         )}
-        {modal?.type === "addEmployee" && (
-          <EmployeeFormModal departments={settings.departments} onClose={() => setModal(null)} onSubmit={(f) => { addEmployee(f); setModal(null); }} />
+        {modal?.type === "addProject" && (
+          <ProjectFormModal onClose={() => setModal(null)} onSubmit={(f) => { addProject(f); setModal(null); }} />
         )}
+        {(modal?.type === "warehouseIn" || modal?.type === "warehouseOut") && <WarehouseTxModal
+          title={modal.type === "warehouseIn" ? "Lập phiếu nhập kho" : "Lập phiếu xuất kho"}
+          fixedType={modal.type === "warehouseIn" ? "nhap" : "xuat"}
+          assets={data.assets} projects={data.projects} onClose={()=>setModal(null)} onSubmit={f=>{addWarehouseTx(f);setModal(null)}}
+        />}
+        {modal?.type === "costHistory" && <CostHistoryModal assets={data.assets} onClose={()=>setModal(null)} onSubmit={f=>{addCostHistory(f);setModal(null)}} />}
         {modal?.type === "changePassword" && (
           <ChangePasswordModal onClose={() => setModal(null)} onSubmit={async (oldPw, newPw) => { const ok = await changeOwnPassword(oldPw, newPw); if (ok) setModal(null); }} />
         )}
@@ -1124,7 +1281,7 @@ function Sidebar({ active, setActive, data, counts, currentUser, isAdmin, onLogo
             <div className="px-5 mb-1.5 text-[10.5px] tracking-wider font-medium" style={{ color: "#8A9088" }}>{sec.section}</div>
             {sec.items.filter((it) => !it.adminOnly || isAdmin).map((it) => {
               const isActive = active === it.id;
-              const count = it.badge === "assets" ? counts.total : it.badge === "employees" ? data.employees.length : null;
+              const count = it.badge === "assets" ? counts.total : it.badge === "projects" ? data.projects.length : null;
               return (
                 <button
                   key={it.id}
@@ -1188,7 +1345,7 @@ function TopBar({ query, setQuery, data, saving, onRefresh }) {
 
 /* ============================== OVERVIEW ============================== */
 
-function Overview({ data, counts, empName }) {
+function Overview({ data, counts, projectName }) {
   const breakdown = [
     { label: STATUS.ASSIGNED, value: counts[STATUS.ASSIGNED] },
     { label: STATUS.SHARED, value: counts[STATUS.SHARED] },
@@ -1219,7 +1376,7 @@ function Overview({ data, counts, empName }) {
       <div className="grid grid-cols-4 gap-3 mb-6">
         <StatCard label="Đã chuyển team khác" value={counts[STATUS.TRANSFERRED_OUT]} />
         <StatCard label="Còn bảo hành" value={counts.warranty} accent={TOKENS.brand} />
-        <StatCard label="Tổng nhân sự" value={data.employees.length} />
+        <StatCard label="Tổng công trình" value={data.projects.length} />
         <StatCard label="Chi phí sửa chữa 2026" value={fmtVND(counts.repairCostThisYear)} accent={TOKENS.gold} />
       </div>
 
@@ -1279,10 +1436,10 @@ function ExportBar({ onExcel, onPdf }) {
   );
 }
 
-function AssetCatalog({ assets, empName, onSelect, selectedAssetId, onAdd, customColumns = [], onExportExcel, onExportPdf }) {
-  const headers = ["Mã quản lý", "Tên tài sản", "Danh mục", "Người dùng", "Bộ phận", "Trạng thái", "Nguyên giá", ...customColumns.map((c) => c.label)];
+function AssetCatalog({ assets, projectName, onSelect, selectedAssetId, onAdd, onDelete, isAdmin, customColumns = [], onExportExcel, onExportPdf }) {
+  const headers = ["Mã quản lý", "Tên tài sản", "Loại", "Nhóm tài sản", "Công trình", "Nguồn", "Trạng thái", "Nguyên giá", ...customColumns.map((c) => c.label)];
   const buildRows = () => assets.map((a) => [
-    a.code, a.name, a.category, empName(a.assignedTo), a.department, a.status, a.cost,
+    a.code, a.name, a.category, a.assetGroup || "", projectName(a.projectId), a.ownership || "Công ty", a.status, a.cost,
     ...customColumns.map((c) => a.customFields?.[c.key] ?? ""),
   ]);
 
@@ -1298,7 +1455,7 @@ function AssetCatalog({ assets, empName, onSelect, selectedAssetId, onAdd, custo
       <div className="rounded-lg overflow-x-auto aa-scroll" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
         <table className="w-full">
           <thead><tr>
-            <Th>Mã quản lý</Th><Th>Tên tài sản</Th><Th>Danh mục</Th><Th>Người dùng</Th><Th>Bộ phận</Th><Th>Trạng thái</Th><Th right>Nguyên giá</Th>
+            <Th>Mã quản lý</Th><Th>Tên tài sản</Th><Th>Loại</Th><Th>Nhóm tài sản</Th><Th>Công trình</Th><Th>Nguồn</Th><Th>Trạng thái</Th><Th right>Nguyên giá</Th>
             {customColumns.map((c) => <Th key={c.key}>{c.label}</Th>)}
           </tr></thead>
           <tbody>
@@ -1308,8 +1465,9 @@ function AssetCatalog({ assets, empName, onSelect, selectedAssetId, onAdd, custo
                 <Td mono><Tag>{a.code}</Tag></Td>
                 <Td>{a.name}</Td>
                 <Td>{a.category}</Td>
-                <Td>{empName(a.assignedTo)}</Td>
-                <Td>{a.department}</Td>
+                <Td>{a.assetGroup || "—"}</Td>
+                <Td>{projectName(a.projectId)}</Td>
+                <Td>{a.ownership || "Công ty"}</Td>
                 <Td><StatusDot status={a.status} /></Td>
                 <Td right mono>{fmtVND(a.cost)}</Td>
                 {customColumns.map((c) => (
@@ -1327,7 +1485,7 @@ function AssetCatalog({ assets, empName, onSelect, selectedAssetId, onAdd, custo
   );
 }
 
-function AssetDetail({ asset, data, empName, isAdmin, onClose, onAction }) {
+function AssetDetail({ asset, data, projectName, isAdmin, onDelete, onClose, onAction }) {
   const [tab, setTab] = useState("vongdoi");
   const history = data.transactions.filter((t) => t.assetId === asset.id);
   const repairs = data.repairs.filter((r) => r.assetId === asset.id);
@@ -1403,7 +1561,7 @@ function AssetDetail({ asset, data, empName, isAdmin, onClose, onAction }) {
           <div className="space-y-2.5 text-[13px]">
             {[
               ["Serial", asset.serial], ["Danh mục", asset.category], ["Bộ phận", asset.department],
-              ["Người dùng", empName(asset.assignedTo)], ["Ngày mua", fmtDate(asset.purchaseDate)],
+              ["Người dùng", projectName(asset.projectId)], ["Ngày mua", fmtDate(asset.purchaseDate)],
               ["Nguyên giá", fmtVND(asset.cost)], ["Thời gian SD", `${asset.usefulLifeMonths} tháng`],
               ["Bảo hành đến", asset.warranty ? fmtDate(asset.warrantyEnd) : "Không bảo hành"],
               ["Nhà cung cấp", asset.supplier || "—"],
@@ -1455,6 +1613,7 @@ function AssetDetail({ asset, data, empName, isAdmin, onClose, onAction }) {
         <Btn kind="gold" onClick={() => onAction("minutes")}>Biên bản</Btn>
         <Btn kind="info" icon={ArrowLeftRight} onClick={() => onAction("transfer")}>Chuyển bộ phận</Btn>
         <Btn icon={Pencil} onClick={() => onAction("editAsset")}>Sửa</Btn>
+        {isAdmin && <Btn kind="danger" icon={Trash2} onClick={() => onDelete(asset.id)}>Xoá</Btn>}
         <Btn kind="gold" icon={Wrench} onClick={() => onAction("repair")}>Phiếu sửa</Btn>
         {isAdmin ? (
           <Btn kind="danger" icon={Trash2} onClick={() => onAction("liquidate")}>Thanh lý</Btn>
@@ -1470,22 +1629,22 @@ function AssetDetail({ asset, data, empName, isAdmin, onClose, onAction }) {
 
 /* ============================== BY EMPLOYEE ============================== */
 
-function ByEmployee({ data, empName, onSelect }) {
-  const grouped = data.employees.map((e) => ({ emp: e, assets: data.assets.filter((a) => a.assignedTo === e.id) }));
+function ByProject({ data, projectName, onSelect }) {
+  const grouped = data.projects.map((project) => ({ project, assets: data.assets.filter((a) => a.projectId === project.id) }));
   return (
     <div className="aa-fade">
-      <h1 className="aa-display text-xl font-semibold mb-4">Tài sản theo nhân viên</h1>
+      <h1 className="aa-display text-xl font-semibold mb-4">Tài sản theo công trình</h1>
       <div className="space-y-4">
-        {grouped.map(({ emp, assets }) => (
-          <div key={emp.id} className="rounded-lg overflow-hidden" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+        {grouped.map(({ project, assets }) => (
+          <div key={project.id} className="rounded-lg overflow-hidden" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
             <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: `1px solid ${TOKENS.border}` }}>
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-full flex items-center justify-center aa-display font-semibold text-[12px]" style={{ background: TOKENS.brandSoft, color: TOKENS.brand }}>
-                  {emp.name.split(" ").slice(-1)[0][0]}
+                  {project.name?.split(" ").slice(-1)[0]?.[0] || "C"}
                 </div>
                 <div>
-                  <div className="text-[13px] font-medium">{emp.name}</div>
-                  <div className="text-[11.5px]" style={{ color: TOKENS.muted }}>{emp.department} · {emp.email}</div>
+                  <div className="text-[13px] font-medium">{project.name}</div>
+                  <div className="text-[11.5px]" style={{ color: TOKENS.muted }}>{project.commander} · {project.address}</div>
                 </div>
               </div>
               <div className="aa-mono text-[12px]" style={{ color: TOKENS.muted }}>{assets.length} tài sản</div>
@@ -1724,33 +1883,10 @@ function TransactionsView({ transactions, assetsById, onExportExcel, onExportPdf
   );
 }
 
-function EmployeesView({ employees, assets, onAdd, onExportExcel, onExportPdf }) {
-  const headers = ["Họ tên", "Bộ phận", "Email", "Tài sản đang giữ"];
-  const buildRows = () => employees.map((e) => [e.name, e.department, e.email, assets.filter((a) => a.assignedTo === e.id).length]);
-  return (
-    <div className="aa-fade">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="aa-display text-xl font-semibold">Nhân sự</h1>
-        <div className="flex items-center gap-2">
-          <ExportBar onExcel={() => onExportExcel("nhan-su", headers, buildRows())} onPdf={() => onExportPdf("Nhân sự", headers, buildRows())} />
-          <Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm nhân sự</Btn>
-        </div>
-      </div>
-      <div className="rounded-lg overflow-hidden" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
-        <table className="w-full">
-          <thead><tr><Th>Họ tên</Th><Th>Bộ phận</Th><Th>Email</Th><Th right>Tài sản đang giữ</Th></tr></thead>
-          <tbody>
-            {employees.map((e) => (
-              <tr key={e.id} className="aa-row">
-                <Td>{e.name}</Td><Td>{e.department}</Td><Td mono>{e.email}</Td>
-                <Td right mono>{assets.filter((a) => a.assignedTo === e.id).length}</Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
+function ProjectsView({ projects, assets, onAdd, onExportExcel, onExportPdf, isAdmin, onDelete }) {
+  const headers = ["Chỉ huy trưởng","Tên công trình","Địa chỉ","Hạng mục thi công","Ngày bắt đầu","Ngày kết thúc","Tài sản"];
+  const rows = projects.map(p => [p.commander,p.name,p.address,p.workItem,fmtDate(p.startDate),fmtDate(p.endDate),assets.filter(a=>a.projectId===p.id).length]);
+  return <div className="aa-fade"><div className="flex items-center justify-between mb-4"><h1 className="aa-display text-xl font-semibold">Công trình</h1><div className="flex gap-2"><ExportBar onExcel={()=>onExportExcel("cong-trinh",headers,rows)} onPdf={()=>onExportPdf("Công trình",headers,rows)}/><Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm công trình</Btn></div></div><div className="rounded-lg overflow-hidden" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><table className="w-full"><thead><tr>{headers.map(h=><Th key={h}>{h}</Th>)}{isAdmin&&<Th>Thao tác</Th>}</tr></thead><tbody>{projects.map(p=><tr key={p.id} className="aa-row"><Td>{p.commander}</Td><Td>{p.name}</Td><Td>{p.address}</Td><Td>{p.workItem}</Td><Td>{fmtDate(p.startDate)}</Td><Td>{fmtDate(p.endDate)}</Td><Td right mono>{assets.filter(a=>a.projectId===p.id).length}</Td>{isAdmin&&<Td><button className="p-1 rounded hover:bg-black/10" title="Xoá công trình" onClick={()=>onDelete(p.id)}><Trash2 size={14}/></button></Td>}</tr>)}</tbody></table>{projects.length===0&&<EmptyState text="Chưa có công trình"/>}</div></div>;
 }
 
 function ActivityLogView({ log }) {
@@ -1772,6 +1908,39 @@ function ActivityLogView({ log }) {
     </div>
   );
 }
+
+function WarehouseHub({ warehouse, assets, projects, settings, onAdd, onExportExcel, onExportPdf, onImport, isAdmin }) {
+  const [tab, setTab] = useState("in");
+  const [filter, setFilter] = useState({ category:"", group:"", ownership:"", projectId:"", locationName:"", asOfDate:nowIso().slice(0,10) });
+  const [query, setQuery] = useState("");
+  const projectName = id => projects.find(p => p.id === id)?.name || "";
+  const getLocation = w => w.locationName || (w.projectId ? projectName(w.projectId) : "Kho trung tâm");
+  const categories=[...new Set(assets.map(a=>a.category).filter(Boolean))];
+  const groupsList=[...new Set(assets.map(a=>a.assetGroup).filter(Boolean))];
+  const ownerships=[...new Set(assets.map(a=>a.ownership).filter(Boolean))];
+  const locations=[...new Set(warehouse.map(getLocation).filter(Boolean))];
+  const filteredTx=warehouse.filter(w=>{const a=assets.find(x=>x.id===w.assetId);if(!a)return false;if(filter.category&&(w.category||a.category)!==filter.category)return false;if(filter.group&&(w.assetGroup||a.assetGroup)!==filter.group)return false;if(filter.ownership&&(w.ownership||a.ownership)!==filter.ownership)return false;if(filter.projectId&&(w.projectId||a.projectId)!==filter.projectId)return false;if(filter.locationName&&getLocation(w)!==filter.locationName)return false;if(query&&!`${w.voucherNo||""} ${a.name} ${a.code}`.toLowerCase().includes(query.toLowerCase()))return false;return true;});
+  const headers=["Số phiếu","Ngày tháng","Tên tài sản","Mã hàng","Kho/Công trình","Loại tài sản","Nhóm tài sản","Nguồn gốc","Người giao/nhận","Số lượng","ĐVT","Đơn giá","Thành tiền","Ghi chú"];
+  const reportTx=warehouse.filter(w=>String(w.date||"")<=String(filter.asOfDate));
+  const balances={};
+  reportTx.forEach(w=>{const a=assets.find(x=>x.id===w.assetId);if(!a)return;const loc=getLocation(w), key=`${a.id}¦${loc}`;if(!balances[key])balances[key]={assetId:a.id,code:a.code,name:a.name,location:loc,category:w.category||a.category||"Khác",group:w.assetGroup||a.assetGroup||"Thiết bị chính",ownership:w.ownership||a.ownership||"Công ty",unit:w.unit||"Cái",inQty:0,outQty:0,inValue:0,outValue:0};const q=Number(w.quantity||0),v=Number(w.total??q*Number(w.unitCost||0));if(w.type==="nhap"){balances[key].inQty+=q;balances[key].inValue+=v}else{balances[key].outQty+=q;balances[key].outValue+=v;}});
+  const detailRows=Object.values(balances).filter(r=>r.inQty-r.outQty>0).filter(r=>!filter.category||r.category===filter.category).filter(r=>!filter.group||r.group===filter.group).filter(r=>!filter.ownership||r.ownership===filter.ownership).filter(r=>!filter.locationName||r.location===filter.locationName).filter(r=>!filter.projectId||(projects.find(p=>p.name===r.location)?.id===filter.projectId)).sort((a,b)=>`${a.location}${a.group}${a.category}${a.code}`.localeCompare(`${b.location}${b.group}${b.category}${b.code}`));
+  const reportHeaders=["Kho/Công trình","Loại tài sản","Nhóm tài sản","Nguồn gốc","Mã hàng","Tên tài sản","ĐVT","Nhập lũy kế","Xuất lũy kế","Tồn đến ngày","Giá trị tồn"];
+  const reportRows=detailRows.map(r=>[r.location,r.category,r.group,r.ownership,r.code,r.name,r.unit,r.inQty,r.outQty,r.inQty-r.outQty,r.inValue-r.outValue]);
+  const summary={qty:detailRows.reduce((s,r)=>s+r.inQty-r.outQty,0),value:detailRows.reduce((s,r)=>s+r.inValue-r.outValue,0)};
+  const tabBtn=(id,label,icon)=><button onClick={()=>setTab(id)} className="flex items-center gap-2 px-4 py-2.5 text-[13px] font-medium" style={{color:tab===id?TOKENS.brand:TOKENS.muted,borderBottom:`2px solid ${tab===id?TOKENS.brand:"transparent"}`}}>{icon}{label}</button>;
+  const downloadTemplate=()=>downloadExcelTemplate("Mau_Import_Phieu_Nhap_Xuat_Kho",["Loại phiếu","Số phiếu","Ngày tháng","Tên tài sản","Mã hàng","Kho/Công trình","Loại địa điểm","Loại tài sản","Nhóm tài sản","Nguồn gốc","Người giao/nhận","Số lượng","Đơn vị tính","Đơn giá","Thành tiền","Ghi chú"],[["Nhập kho","PN-20260822-001","2026-08-22","Máy xúc 01","MX-01",projects[0]?.name||"Kho trung tâm",projects[0]?"Công trình":"Kho","Máy xúc","Thiết bị chính","Thuê","Nguyễn Văn A",1,"Cái",500000000,500000000,"Nhập đầu kỳ"]]);
+  return <div className="aa-fade"><div className="flex items-start justify-between mb-4 gap-4"><div><h1 className="aa-display text-xl font-semibold">Kho</h1><div className="text-[12px] mt-1" style={{color:TOKENS.muted}}>Quản lý phiếu nhập, phiếu xuất và tồn thiết bị theo từng kho/công trình</div></div><div className="flex gap-2 flex-wrap justify-end"><Btn icon={Download} onClick={downloadTemplate}>Tải mẫu Excel</Btn>{isAdmin&&<label className="inline-flex items-center gap-1.5 rounded-md font-medium px-3 py-1.5 text-[13px] cursor-pointer" style={{background:TOKENS.info,color:"white"}}><UploadCloud size={14}/>Import Excel<input type="file" accept=".xlsx,.xls" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)onImport(f);e.target.value=""}}/></label>}</div></div><div className="rounded-lg overflow-hidden" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><div className="flex border-b" style={{borderColor:TOKENS.border}}>{tabBtn("in","Phiếu nhập kho",<DownloadCloud size={15}/>)}{tabBtn("out","Phiếu xuất kho",<UploadCloud size={15}/>)}{tabBtn("report","Báo cáo nhập xuất tồn",<ClipboardList size={15}/> )}</div><div className="p-4">{(tab==="in"||tab==="out")&&<><div className="flex items-center justify-between gap-3 mb-3"><Btn kind="primary" icon={Plus} onClick={()=>onAdd(tab==="in"?"nhap":"xuat")}>{tab==="in"?"Lập phiếu nhập":"Lập phiếu xuất"}</Btn><input className={inputCls} style={{...inputStyle,maxWidth:290}} placeholder="Tìm số phiếu / tên tài sản / mã" value={query} onChange={e=>setQuery(e.target.value)}/></div><WarehouseFilter filter={filter} setFilter={setFilter} categories={categories} groups={groupsList} ownerships={ownerships} projects={projects} locations={locations}/><div className="rounded-lg overflow-auto" style={{border:`1px solid ${TOKENS.border}`}}><table className="w-full min-w-[1500px]"><thead><tr>{headers.map(h=><Th key={h}>{h}</Th>)}</tr></thead><tbody>{filteredTx.filter(w=>w.type===(tab==="in"?"nhap":"xuat")).map(w=>{const a=assets.find(x=>x.id===w.assetId)||{};return <tr key={w.id} className="aa-row"><Td><Tag>{w.voucherNo||"—"}</Tag></Td><Td mono>{fmtDate(w.date)}</Td><Td>{w.itemName||a.name}</Td><Td><Tag>{w.itemCode||a.code}</Tag></Td><Td>{getLocation(w)}</Td><Td>{w.category||a.category}</Td><Td>{w.assetGroup||a.assetGroup}</Td><Td>{w.ownership||a.ownership}</Td><Td>{w.receiver||"—"}</Td><Td right mono>{w.quantity}</Td><Td>{w.unit||"Cái"}</Td><Td right mono>{fmtVND(w.unitCost)}</Td><Td right mono>{fmtVND(w.total??Number(w.quantity||0)*Number(w.unitCost||0))}</Td><Td>{w.note||"—"}</Td></tr>})}</tbody></table>{!filteredTx.filter(w=>w.type===(tab==="in"?"nhap":"xuat")).length&&<EmptyState text={tab==="in"?"Chưa có phiếu nhập kho":"Chưa có phiếu xuất kho"}/>}</div></>}{tab==="report"&&<><div className="rounded-lg p-4 mb-4" style={{background:TOKENS.paper,border:`1px solid ${TOKENS.border}`}}><div className="flex flex-wrap gap-2 items-end"><WarehouseFilter filter={filter} setFilter={setFilter} categories={categories} groups={groupsList} ownerships={ownerships} projects={projects} locations={locations}/><label className="text-[11px]" style={{color:TOKENS.muted}}>Tồn đến ngày<input type="date" className={inputCls} style={{...inputStyle,width:155}} value={filter.asOfDate} onChange={e=>setFilter({...filter,asOfDate:e.target.value})}/></label></div><div className="flex flex-wrap gap-2 mt-3 items-center"><span className="text-[12px] px-2 py-1 rounded" style={{background:TOKENS.brandSoft,color:TOKENS.brand}}>Tổng thiết bị tồn: <b>{summary.qty}</b></span><span className="text-[12px] px-2 py-1 rounded" style={{background:TOKENS.goldSoft,color:TOKENS.gold}}>Giá trị tồn: <b>{fmtVND(summary.value)}</b></span><div className="ml-auto"><ExportBar onExcel={()=>onExportExcel("bao-cao-ton-thiet-bi-theo-kho-cong-trinh",reportHeaders,reportRows)} onPdf={()=>onExportPdf(`Báo cáo tồn thiết bị đến ${fmtDate(filter.asOfDate)}`,reportHeaders,reportRows)}/></div></div></div><div className="mb-3 text-[13px] font-medium">Chi tiết thiết bị đang tồn tại thời điểm {fmtDate(filter.asOfDate)}</div><div className="rounded-lg overflow-auto" style={{border:`1px solid ${TOKENS.border}`}}><table className="w-full min-w-[1450px]"><thead><tr>{reportHeaders.map(h=><Th key={h} right={h.includes("lũy kế")||h.includes("Tồn")||h.includes("Giá trị")}>{h}</Th>)}</tr></thead><tbody>{reportRows.map((r,i)=><tr key={i} className="aa-row">{r.map((c,j)=><Td key={j} right={j>=7} mono={j>=7}>{j===10?fmtVND(c):c}</Td>)}</tr>)}</tbody></table>{!reportRows.length&&<EmptyState text="Không có thiết bị đang tồn theo điều kiện lọc"/>}</div></>}</div></div></div>;
+}
+function WarehouseFilter({filter,setFilter,categories,groups,ownerships,projects,locations}){const set=k=>e=>setFilter({...filter,[k]:e.target.value});return <div className="flex flex-wrap gap-2 mb-3"><select className={inputCls} style={{...inputStyle,width:175}} value={filter.category} onChange={set("category")}><option value="">Tất cả loại tài sản</option>{categories.map(x=><option key={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:175}} value={filter.group} onChange={set("group")}><option value="">Tất cả nhóm</option>{groups.map(x=><option key={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:155}} value={filter.ownership} onChange={set("ownership")}><option value="">Tất cả nguồn gốc</option>{ownerships.map(x=><option key={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:210}} value={filter.projectId} onChange={set("projectId")}><option value="">Tất cả công trình</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select><select className={inputCls} style={{...inputStyle,width:220}} value={filter.locationName} onChange={set("locationName")}><option value="">Tất cả kho / công trình</option>{locations.map(x=><option key={x}>{x}</option>)}</select></div>;
+}
+function CostHistoryView({ costHistory, assetsById, onAdd, onExportExcel, onExportPdf }) { const headers=["Tài sản","Loại chi phí","Ngày","Số tiền","Nội dung","Nhà cung cấp"]; const rows=costHistory.map(c=>[assetsById[c.assetId]?.code,c.type,fmtDate(c.date),c.amount,c.description,c.vendor]); return <div className="aa-fade"><div className="flex items-center justify-between mb-4"><h1 className="aa-display text-xl font-semibold">Chi phí thiết bị</h1><div className="flex gap-2"><ExportBar onExcel={()=>onExportExcel("lich-su-chi-phi-thiet-bi",headers,rows)} onPdf={()=>onExportPdf("Lịch sử chi phí thiết bị",headers,rows)}/><Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm chi phí</Btn></div></div><div className="rounded-lg overflow-hidden" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><table className="w-full"><thead><tr>{headers.map(h=><Th key={h}>{h}</Th>)}</tr></thead><tbody>{costHistory.map(c=><tr key={c.id} className="aa-row"><Td mono><Tag>{assetsById[c.assetId]?.code}</Tag></Td><Td>{c.type}</Td><Td>{fmtDate(c.date)}</Td><Td right mono>{fmtVND(c.amount)}</Td><Td>{c.description}</Td><Td>{c.vendor}</Td></tr>)}</tbody></table>{!costHistory.length&&<EmptyState text="Chưa có chi phí"/>}</div></div>; }
+function WarehouseTxModal({ assets, projects, onClose, onSubmit, title, fixedType }) {
+  const first=assets[0]; const [f,setF]=useState({assetId:first?.id||"",type:fixedType||"nhap",voucherNo:"",quantity:1,date:nowIso().slice(0,10),unit:"Cái",unitCost:first?.cost||0,receiver:"",locationType:first?.projectId?"project":"warehouse",warehouseName:"Kho trung tâm",category:first?.category||"",assetGroup:first?.assetGroup||"",ownership:first?.ownership||"Công ty",projectId:first?.projectId||"",note:""});
+  const asset=assets.find(a=>a.id===f.assetId)||{}; const set=k=>e=>setF({...f,[k]:e.target.value}); const pick=e=>{const a=assets.find(x=>x.id===e.target.value)||{};setF({...f,assetId:e.target.value,category:a.category||"",assetGroup:a.assetGroup||"",ownership:a.ownership||"Công ty",projectId:a.projectId||"",unitCost:a.cost||0,locationType:a.projectId?"project":"warehouse"})}; const total=(Number(f.quantity)||0)*(Number(f.unitCost)||0);
+  return <Modal title={title||"Lập phiếu kho"} onClose={onClose} wide><div className="grid grid-cols-2 gap-x-4"><Field label="Số phiếu"><input className={inputCls} style={inputStyle} value={f.voucherNo} onChange={set("voucherNo")} placeholder={fixedType==="xuat"?"PX-20260822-001":"PN-20260822-001"}/></Field><Field label="Ngày tháng"><input type="date" className={inputCls} style={inputStyle} value={f.date} onChange={set("date")}/></Field><Field label="Tên tài sản"><select className={inputCls} style={inputStyle} value={f.assetId} onChange={pick}>{assets.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></Field><Field label="Mã hàng tự động"><input readOnly className={inputCls} style={{...inputStyle,background:TOKENS.paper}} value={asset.code||""}/></Field><Field label="Kho / Công trình"><select className={inputCls} style={inputStyle} value={f.locationType} onChange={e=>setF({...f,locationType:e.target.value,projectId:e.target.value==="project"?f.projectId:""})}><option value="project">Công trình</option><option value="warehouse">Kho</option></select></Field><Field label={f.locationType==="project"?"Tên công trình":"Tên kho"}>{f.locationType==="project"?<select className={inputCls} style={inputStyle} value={f.projectId} onChange={set("projectId")}><option value="">Chọn công trình</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>:<input className={inputCls} style={inputStyle} value={f.warehouseName} onChange={set("warehouseName")} placeholder="VD: Kho vật tư Xà Lá"/>}</Field><Field label="Người giao/nhận"><input className={inputCls} style={inputStyle} value={f.receiver} onChange={set("receiver")} placeholder="Người giao hoặc người nhận"/></Field><Field label="Loại tài sản"><input readOnly className={inputCls} style={{...inputStyle,background:TOKENS.paper}} value={asset.category||""}/></Field><Field label="Nhóm tài sản"><input readOnly className={inputCls} style={{...inputStyle,background:TOKENS.paper}} value={asset.assetGroup||""}/></Field><Field label="Nguồn gốc"><input readOnly className={inputCls} style={{...inputStyle,background:TOKENS.paper}} value={asset.ownership||""}/></Field><Field label="Số lượng"><input type="number" min="0.01" step="0.01" className={inputCls} style={inputStyle} value={f.quantity} onChange={set("quantity")}/></Field><Field label="Đơn vị tính"><input className={inputCls} style={inputStyle} value={f.unit} onChange={set("unit")}/></Field><Field label="Đơn giá"><input type="number" min="0" className={inputCls} style={inputStyle} value={f.unitCost} onChange={set("unitCost")}/></Field><Field label="Thành tiền"><input readOnly className={inputCls} style={{...inputStyle,background:TOKENS.paper,fontWeight:600}} value={fmtVND(total)}/></Field></div><Field label="Ghi chú"><textarea className={inputCls} style={inputStyle} value={f.note} onChange={set("note")} placeholder="Số chứng từ, diễn giải..."/></Field><div className="flex justify-end gap-2 mt-3"><Btn onClick={onClose}>Huỷ</Btn><Btn kind="primary" onClick={()=>onSubmit(f)}>Lưu phiếu</Btn></div></Modal>;
+}
+function CostHistoryModal({ assets, onClose, onSubmit }) { const [f,setF]=useState({assetId:assets[0]?.id||"",type:"Cấp dầu",date:nowIso().slice(0,10),amount:0,description:"",vendor:""}); const set=k=>e=>setF({...f,[k]:e.target.value}); return <Modal title="Thêm chi phí thiết bị" onClose={onClose}><Field label="Tài sản"><select className={inputCls} style={inputStyle} value={f.assetId} onChange={set("assetId")}>{assets.map(a=><option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}</select></Field><Field label="Loại chi phí"><select className={inputCls} style={inputStyle} value={f.type} onChange={set("type")}><option>Cấp dầu</option><option>Thay cáp</option><option>Sửa chữa</option><option>Chi phí khác</option></select></Field><Field label="Ngày"><input type="date" className={inputCls} style={inputStyle} value={f.date} onChange={set("date")}/></Field><Field label="Số tiền"><input type="number" className={inputCls} style={inputStyle} value={f.amount} onChange={set("amount")}/></Field><Field label="Nội dung"><textarea className={inputCls} style={inputStyle} value={f.description} onChange={set("description")}/></Field><Field label="Nhà cung cấp"><input className={inputCls} style={inputStyle} value={f.vendor} onChange={set("vendor")}/></Field><div className="flex justify-end gap-2"><Btn onClick={onClose}>Huỷ</Btn><Btn kind="primary" onClick={()=>onSubmit(f)}>Lưu chi phí</Btn></div></Modal>; }
 
 /* ============================== SETTINGS ============================== */
 
@@ -1809,7 +1978,7 @@ function EditableTagList({ items, onAdd, onRemove, usage, placeholder }) {
 function SettingsView({
   settings, onSetCompanyName, onAddCategory, onRemoveCategory, onAddDepartment, onRemoveDepartment,
   onAddColumn, onRemoveColumn, categoryUsage, deptUsage, users, currentUser, onSetUserRole, onSendPasswordReset,
-  backups, onCreateBackup, onRestoreBackup, onDeleteBackup, onDownloadBackupFile, onRestoreFromFile,
+  backups, onCreateBackup, onRestoreBackup, onDeleteBackup, onDownloadBackupFile, onRestoreFromFile, onImportExcel,
 }) {
   const [name, setName] = useState(settings.companyName);
   const [colLabel, setColLabel] = useState("");
@@ -1829,13 +1998,22 @@ function SettingsView({
       </div>
 
       <div className="rounded-lg p-5 mb-4" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+        <div className="text-[13px] font-medium mb-1">Nhập liệu hàng loạt từ Excel</div>
+        <div className="text-[11.5px] mb-3" style={{ color: TOKENS.muted }}>Dùng để đổ lô dữ liệu nhanh vào danh mục tài sản hoặc công trình. Dòng đầu tiên phải là tiêu đề cột.</div>
+        <div className="flex gap-2">
+          <label className="inline-flex"><input type="file" accept=".xlsx,.xls" className="hidden" onChange={e=>{const f=e.target.files?.[0]; if(f) onImportExcel(f,"assets"); e.target.value="";}}/><span className="inline-flex items-center gap-1.5 rounded-md font-medium px-3 py-1.5 text-[13px] cursor-pointer" style={{background:TOKENS.brand,color:"#fff"}}><UploadCloud size={14}/>Import tài sản</span></label>
+          <label className="inline-flex"><input type="file" accept=".xlsx,.xls" className="hidden" onChange={e=>{const f=e.target.files?.[0]; if(f) onImportExcel(f,"projects"); e.target.value="";}}/><span className="inline-flex items-center gap-1.5 rounded-md font-medium px-3 py-1.5 text-[13px] cursor-pointer" style={{background:TOKENS.info,color:"#fff"}}><UploadCloud size={14}/>Import công trình</span></label>
+        </div>
+      </div>
+
+      <div className="rounded-lg p-5 mb-4" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
         <div className="text-[13px] font-medium mb-1">Danh mục tài sản</div>
         <div className="text-[11.5px] mb-3" style={{ color: TOKENS.muted }}>Các loại tài sản có thể chọn khi thêm mới (Laptop, Màn hình…).</div>
         <EditableTagList items={settings.categories} onAdd={onAddCategory} onRemove={onRemoveCategory} usage={categoryUsage} placeholder="VD: Máy chiếu" />
       </div>
 
       <div className="rounded-lg p-5 mb-4" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
-        <div className="text-[13px] font-medium mb-1">Bộ phận</div>
+        <div className="text-[13px] font-medium mb-1">Bộ phận / đơn vị sử dụng</div>
         <div className="text-[11.5px] mb-3" style={{ color: TOKENS.muted }}>Danh sách bộ phận dùng khi cấp phát hoặc chuyển tài sản.</div>
         <EditableTagList items={settings.departments} onAdd={onAddDepartment} onRemove={onRemoveDepartment} usage={deptUsage} placeholder="VD: Marketing" />
       </div>
@@ -1946,7 +2124,7 @@ function UserManager({ users, currentUser, onSetUserRole, onSendPasswordReset })
     <div className="rounded-lg p-5 mt-4" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
       <div className="text-[13px] font-medium mb-1">Tài khoản đăng nhập</div>
       <div className="text-[11.5px] mb-3" style={{ color: TOKENS.muted }}>
-        <b>Toàn quyền</b> dùng được mọi chức năng, kể cả Cài đặt. <b>Nhập liệu &amp; xuất báo cáo</b> chỉ thêm/cập nhật dữ liệu tài sản và xuất Excel/PDF — không vào được Cài đặt và không được thanh lý tài sản.
+        <b>Toàn quyền</b> dùng được mọi chức năng, kể cả Cài đặt. <b>Nhập liệu &amp; xuất báo cáo</b> chỉ nhập/cập nhật dữ liệu nghiệp vụ và xuất Excel/PDF; không được xoá tài sản, công trình, danh mục hay thanh lý.
         Người mới tự tạo tài khoản ở màn hình đăng nhập (tab "Tạo tài khoản") — bạn nâng quyền cho họ ở đây. Muốn khoá hẳn một tài khoản, xoá ở Supabase Dashboard → Authentication → Users.
       </div>
 
@@ -1990,15 +2168,15 @@ function UserManager({ users, currentUser, onSetUserRole, onSendPasswordReset })
 
 /* ============================== FORMS / MODALS ============================== */
 
-function AssetFormModal({ title, initial, categories, departments, customColumns = [], onClose, onSubmit }) {
+function AssetFormModal({ title, initial, categories, departments, projects = [], customColumns = [], onClose, onSubmit }) {
   const [f, setF] = useState(() => initial ? {
-    code: initial.code, name: initial.name, category: initial.category, cost: initial.cost,
+    code: initial.code, name: initial.name, category: initial.category, cost: initial.cost, assetGroup: initial.assetGroup || initial.category, ownership: initial.ownership || "Công ty", quantity: initial.quantity || 1, projectId: initial.projectId || "",
     purchaseDate: initial.purchaseDate, usefulLifeMonths: initial.usefulLifeMonths, department: initial.department,
     serial: initial.serial, supplier: initial.supplier, warranty: initial.warranty, warrantyEnd: initial.warrantyEnd, note: initial.note,
     customFields: { ...(initial.customFields || {}) },
   } : {
     code: "", name: "", category: categories[0] || "", cost: "", purchaseDate: nowIso().slice(0, 10),
-    usefulLifeMonths: 36, department: departments[0] || "", serial: "", supplier: "", warranty: true, warrantyEnd: "", note: "",
+    usefulLifeMonths: 36, department: departments[0] || "", projectId: "", assetGroup: categories[0] || "Thiết bị chính", ownership: "Công ty", quantity: 1, serial: "", supplier: "", warranty: true, warrantyEnd: "", note: "",
     customFields: {},
   });
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
@@ -2015,6 +2193,10 @@ function AssetFormModal({ title, initial, categories, departments, customColumns
             {categories.map((c) => <option key={c}>{c}</option>)}
           </select>
         </Field>
+        <Field label="Nhóm tài sản"><input className={inputCls} style={inputStyle} value={f.assetGroup} onChange={set("assetGroup")} placeholder="VD: Thiết bị chính" /></Field>
+        <Field label="Nguồn gốc"><select className={inputCls} style={inputStyle} value={f.ownership} onChange={set("ownership")}><option>Công ty</option><option>Thuê</option></select></Field>
+        <Field label="Công trình"><select className={inputCls} style={inputStyle} value={f.projectId} onChange={set("projectId")}><option value="">Kho / chưa giao</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
+        <Field label="Số lượng"><input type="number" min="1" className={inputCls} style={inputStyle} value={f.quantity} onChange={set("quantity")} /></Field>
         <Field label="Bộ phận">
           <select className={inputCls} style={inputStyle} value={f.department} onChange={set("department")}>
             {departments.map((d) => <option key={d}>{d}</option>)}
@@ -2042,28 +2224,7 @@ function AssetFormModal({ title, initial, categories, departments, customColumns
   );
 }
 
-function AssignModal({ asset, employees, departments, onClose, onSubmit }) {
-  const [empId, setEmpId] = useState(employees[0]?.id || "");
-  const [dept, setDept] = useState(asset.department);
-  return (
-    <Modal title={`Cấp phát — ${asset.code}`} onClose={onClose}>
-      <Field label="Nhân viên nhận">
-        <select className={inputCls} style={inputStyle} value={empId} onChange={(e) => setEmpId(e.target.value)}>
-          {employees.map((e) => <option key={e.id} value={e.id}>{e.name} — {e.department}</option>)}
-        </select>
-      </Field>
-      <Field label="Bộ phận sử dụng">
-        <select className={inputCls} style={inputStyle} value={dept} onChange={(e) => setDept(e.target.value)}>
-          {departments.map((d) => <option key={d}>{d}</option>)}
-        </select>
-      </Field>
-      <div className="flex justify-end gap-2 mt-4">
-        <Btn onClick={onClose}>Huỷ</Btn>
-        <Btn kind="primary" disabled={!empId} onClick={() => onSubmit(empId, dept)}>Xác nhận cấp phát</Btn>
-      </div>
-    </Modal>
-  );
-}
+function AssignModal({ asset, projects, departments, onClose, onSubmit }) { const [projectId,setProjectId]=useState(asset.projectId||projects[0]?.id||""); const [dept,setDept]=useState(asset.department||""); return <Modal title={`Giao tài sản — ${asset.code}`} onClose={onClose}><Field label="Công trình"><select className={inputCls} style={inputStyle} value={projectId} onChange={e=>setProjectId(e.target.value)}>{projects.map(p=><option key={p.id} value={p.id}>{p.name} — {p.commander}</option>)}</select></Field><Field label="Bộ phận sử dụng"><select className={inputCls} style={inputStyle} value={dept} onChange={e=>setDept(e.target.value)}>{departments.map(d=><option key={d}>{d}</option>)}</select></Field><div className="flex justify-end gap-2 mt-4"><Btn onClick={onClose}>Huỷ</Btn><Btn kind="primary" disabled={!projectId} onClick={()=>onSubmit(projectId,dept)}>Xác nhận giao</Btn></div></Modal>; }
 
 function TransferModal({ asset, departments, onClose, onSubmit }) {
   const [dept, setDept] = useState(asset.department);
@@ -2133,25 +2294,7 @@ function MinutesModal({ asset, onClose, onSubmit }) {
   );
 }
 
-function EmployeeFormModal({ departments, onClose, onSubmit }) {
-  const [f, setF] = useState({ name: "", department: departments[0] || "", email: "" });
-  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
-  return (
-    <Modal title="Thêm nhân sự" onClose={onClose}>
-      <Field label="Họ tên"><input className={inputCls} style={inputStyle} value={f.name} onChange={set("name")} /></Field>
-      <Field label="Bộ phận">
-        <select className={inputCls} style={inputStyle} value={f.department} onChange={set("department")}>
-          {departments.map((d) => <option key={d}>{d}</option>)}
-        </select>
-      </Field>
-      <Field label="Email"><input className={inputCls} style={inputStyle} value={f.email} onChange={set("email")} /></Field>
-      <div className="flex justify-end gap-2 mt-4">
-        <Btn onClick={onClose}>Huỷ</Btn>
-        <Btn kind="primary" disabled={!f.name.trim()} onClick={() => onSubmit(f)}>Thêm nhân sự</Btn>
-      </div>
-    </Modal>
-  );
-}
+function ProjectFormModal({ onClose, onSubmit }) { const [f,setF]=useState({commander:"",name:"",address:"",workItem:"",startDate:"",endDate:""}); const set=k=>e=>setF({...f,[k]:e.target.value}); return <Modal title="Thêm công trình" onClose={onClose} wide><div className="grid grid-cols-2 gap-x-4"><Field label="Chỉ huy trưởng"><input className={inputCls} style={inputStyle} value={f.commander} onChange={set("commander")}/></Field><Field label="Tên công trình"><input className={inputCls} style={inputStyle} value={f.name} onChange={set("name")}/></Field><Field label="Địa chỉ"><input className={inputCls} style={inputStyle} value={f.address} onChange={set("address")}/></Field><Field label="Hạng mục thi công"><input className={inputCls} style={inputStyle} value={f.workItem} onChange={set("workItem")}/></Field><Field label="Ngày bắt đầu"><input type="date" className={inputCls} style={inputStyle} value={f.startDate} onChange={set("startDate")}/></Field><Field label="Ngày kết thúc"><input type="date" className={inputCls} style={inputStyle} value={f.endDate} onChange={set("endDate")}/></Field></div><div className="flex justify-end gap-2 mt-4"><Btn onClick={onClose}>Huỷ</Btn><Btn kind="primary" disabled={!f.name.trim()} onClick={()=>onSubmit(f)}>Thêm công trình</Btn></div></Modal>; }
 
 function ChangePasswordModal({ onClose, onSubmit }) {
   const [oldPw, setOldPw] = useState("");
