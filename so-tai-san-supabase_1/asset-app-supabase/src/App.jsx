@@ -8,6 +8,7 @@ import {
   ChevronDown, Package, Stamp, AlertCircle, Loader2, ClipboardCheck,
   Settings as SettingsIcon, FileDown, Printer, Check, PencilLine,
   Lock, LogOut, User, ShieldAlert, Eye, EyeOff, Download, Upload, RotateCcw, HardDrive, Save,
+  PackageMinus, PackagePlus, FileSpreadsheet, HardHat,
 } from "lucide-react";
 
 /* ============================== DESIGN TOKENS ==============================
@@ -1525,7 +1526,7 @@ function Overview({ data, counts, projectName, onNavigate }) {
               <div className="text-[13px] font-medium mb-4">Tài sản theo công trình</div>
               <BarChart
                 bars={data.projects.map((p, i) => ({
-                  label: p.name, value: data.assets.filter((a) => a.assignedTo === p.id).length, color: CHART_PALETTE[i % CHART_PALETTE.length],
+                  label: p.name, value: data.assets.filter((a) => a.projectId === p.id).length, color: CHART_PALETTE[i % CHART_PALETTE.length],
                 }))}
               />
               {data.projects.length === 0 && <EmptyState text="Chưa có công trình nào" />}
