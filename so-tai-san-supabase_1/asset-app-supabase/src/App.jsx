@@ -169,6 +169,8 @@ const NAV = [
     { id: "transactions", label: "Lịch sử giao dịch", icon: ArrowLeftRight },
   ]},
   { section: "TỔ CHỨC", items: [
+    { id: "assetCategories", label: "Danh mục / loại tài sản", icon: Boxes },
+    { id: "departments", label: "Bộ phận / đơn vị", icon: Users2 },
     { id: "suppliers", label: "Danh mục nhà cung cấp", icon: Users2 },
     { id: "projects", label: "Công trình", icon: Building2, badge: "projects" },
     { id: "activityLog", label: "Nhật ký thao tác", icon: ClipboardList },
@@ -1332,6 +1334,26 @@ export default function AssetManagementApp() {
                 onExportExcel={doExportExcel} onExportPdf={doExportPdf}
                 onImport={importWarehouseExcel} onDeleteRows={deleteWarehouseRows} isAdmin={isAdmin}
               /></WarehouseBoundary>}
+              {active === "assetCategories" && <MasterDataPage
+                title="Danh mục / loại tài sản"
+                description="Quản lý danh sách loại tài sản dùng trực tiếp tại trường Danh mục khi thêm/sửa tài sản và trong bộ lọc báo cáo."
+                items={settings.categories || []}
+                usage={(name) => data.assets.filter((a) => a.category === name).length}
+                onAdd={addCategory} onRename={renameCategory} onRemove={removeCategory}
+                importKind="categories" onImportExcel={(file, kind)=>importExcel(file, kind)}
+                templateHeader="Danh mục" placeholder="VD: TBT, VTT, Máy móc thiết bị"
+                isAdmin={isAdmin}
+              />}
+              {active === "departments" && <MasterDataPage
+                title="Bộ phận / đơn vị sử dụng"
+                description="Quản lý danh sách bộ phận dùng trực tiếp khi thêm/sửa, cấp phát và điều chuyển tài sản."
+                items={settings.departments || []}
+                usage={(name) => data.assets.filter((a) => a.department === name).length}
+                onAdd={addDepartment} onRename={renameDepartment} onRemove={removeDepartment}
+                importKind="departments" onImportExcel={(file, kind)=>importExcel(file, kind)}
+                templateHeader="Bộ phận" placeholder="VD: Vận hành, Kế toán, Cơ điện"
+                isAdmin={isAdmin}
+              />}
               {active === "suppliers" && <SupplierCatalog suppliers={settings.suppliers || []} isAdmin={isAdmin} onAdd={addSupplier} onEdit={editSupplier} onDeleteMany={deleteSuppliers} onImportExcel={(file)=>importExcel(file,"suppliers")} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "costHistory" && <CostHistoryView costHistory={data.costHistory} assetsById={assetsById} onAdd={() => setModal({ type: "costHistory" })} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "projects" && <ProjectsView projects={data.projects} assets={data.assets} isAdmin={isAdmin} onDelete={deleteProject} onAdd={() => setModal({ type: "addProject" })} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
@@ -2075,10 +2097,10 @@ class WarehouseBoundary extends Component {
 }
 
 function WarehouseHub({ warehouse = [], assets = [], projects = [], settings = {}, suppliers = [], onAdd, onExportExcel, onExportPdf, onImport, onDeleteRows, isAdmin }) {
-  const safeWarehouse = Array.isArray(warehouse) ? warehouse : [];
-  const safeAssets = Array.isArray(assets) ? assets : [];
-  const safeProjects = Array.isArray(projects) ? projects : [];
-  const safeSuppliers = Array.isArray(suppliers) ? suppliers : [];
+  const safeWarehouse = Array.isArray(warehouse) ? warehouse.filter(w => w && typeof w === "object") : [];
+  const safeAssets = Array.isArray(assets) ? assets.filter(a => a && typeof a === "object") : [];
+  const safeProjects = Array.isArray(projects) ? projects.filter(p => p && typeof p === "object") : [];
+  const safeSuppliers = Array.isArray(suppliers) ? suppliers.filter(Boolean) : [];
   const [tab,setTab]=useState("in");
   const [query,setQuery]=useState("");
   const [selectedRows,setSelectedRows]=useState([]);
@@ -2090,7 +2112,7 @@ function WarehouseHub({ warehouse = [], assets = [], projects = [], settings = {
   const groupsList=[...new Set(safeAssets.map(a=>a.assetGroup).filter(Boolean))];
   const ownerships=[...new Set(safeAssets.map(a=>a.ownership).filter(Boolean))];
   const locations=[...new Set(safeWarehouse.map(w=>getLocation(w)).filter(Boolean))];
-  const supplierNames=[...new Set([...safeSuppliers.map(s=>s.name),...safeWarehouse.map(w=>w?.supplier),...safeWarehouse.map(w=>w?.repairVendor)].filter(Boolean))];
+  const supplierNames=[...new Set([...safeSuppliers.map(s=>typeof s==="string"?s:s?.name),...safeWarehouse.map(w=>w?.supplier),...safeWarehouse.map(w=>w?.repairVendor)].filter(Boolean).map(String))];
   const operationOptions=[...(WAREHOUSE_OPERATIONS?.nhap||[]),...(WAREHOUSE_OPERATIONS?.xuat||[])];
   const matchesCommon=(w)=>{
     if(!w) return false;
@@ -2146,7 +2168,7 @@ function WarehouseHub({ warehouse = [], assets = [], projects = [], settings = {
 }
 
 function ReportTable({headers,rows,moneyCols=[],empty}){return <div className="rounded-lg overflow-auto" style={{border:`1px solid ${TOKENS.border}`}}><table className="w-full min-w-[1450px]"><thead><tr>{headers.map(h=><Th key={h}>{h}</Th>)}</tr></thead><tbody>{rows.map((r,i)=><tr key={i} className="aa-row">{r.map((c,j)=><Td key={j} mono={typeof c==="number"} right={typeof c==="number"}>{moneyCols.includes(j)?fmtVND(c):c}</Td>)}</tr>)}</tbody></table>{!rows.length&&<EmptyState text={empty||"Không có dữ liệu"}/>}</div>}
-function WarehouseFilter({filter,setFilter,categories,groups,ownerships,projects,locations,suppliers=[],operations=[]}){const set=k=>e=>setFilter({...filter,[k]:e.target.value});return <div className="flex flex-wrap gap-2 mb-3"><select className={inputCls} style={{...inputStyle,width:210}} value={filter.operationType||""} onChange={set("operationType")}><option value="">Tất cả loại nghiệp vụ</option>{operations.map(x=><option key={x.id} value={x.id}>{x.label}</option>)}</select><select className={inputCls} style={{...inputStyle,width:175}} value={filter.category} onChange={set("category")}><option value="">Tất cả loại tài sản</option>{categories.map(x=><option key={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:175}} value={filter.group} onChange={set("group")}><option value="">Tất cả nhóm</option>{groups.map(x=><option key={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:155}} value={filter.ownership} onChange={set("ownership")}><option value="">Tất cả nguồn gốc</option>{ownerships.map(x=><option key={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:210}} value={filter.projectId} onChange={set("projectId")}><option value="">Tất cả công trình</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select><select className={inputCls} style={{...inputStyle,width:220}} value={filter.locationName} onChange={set("locationName")}><option value="">Tất cả kho / công trình</option>{locations.map(x=><option key={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:220}} value={filter.supplier||""} onChange={set("supplier")}><option value="">Tất cả nhà cung cấp / đơn vị sửa</option>{suppliers.map(x=><option key={x}>{x}</option>)}</select></div>;}
+function WarehouseFilter({filter,setFilter,categories=[],groups=[],ownerships=[],projects=[],locations=[],suppliers=[],operations=[]}){const set=k=>e=>setFilter({...filter,[k]:e.target.value});return <div className="flex flex-wrap gap-2 mb-3"><select className={inputCls} style={{...inputStyle,width:210}} value={filter.operationType||""} onChange={set("operationType")}><option value="">Tất cả loại nghiệp vụ</option>{operations.map(x=><option key={x.id} value={x.id}>{x.label}</option>)}</select><select className={inputCls} style={{...inputStyle,width:175}} value={filter.category} onChange={set("category")}><option value="">Tất cả loại tài sản</option>{categories.map(x=><option key={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:175}} value={filter.group} onChange={set("group")}><option value="">Tất cả nhóm</option>{groups.map(x=><option key={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:155}} value={filter.ownership} onChange={set("ownership")}><option value="">Tất cả nguồn gốc</option>{ownerships.map(x=><option key={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:210}} value={filter.projectId} onChange={set("projectId")}><option value="">Tất cả công trình</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select><select className={inputCls} style={{...inputStyle,width:220}} value={filter.locationName} onChange={set("locationName")}><option value="">Tất cả kho / công trình</option>{locations.map(x=><option key={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:220}} value={filter.supplier||""} onChange={set("supplier")}><option value="">Tất cả nhà cung cấp / đơn vị sửa</option>{suppliers.map(x=><option key={x}>{x}</option>)}</select></div>;}
 function SupplierSearchPicker({suppliers,value,onPick}){const selected=suppliers.find(s=>s.name===value||s.id===value);const[q,setQ]=useState(selected?.name||value||"");const[open,setOpen]=useState(false);const matches=suppliers.filter(s=>normalizeText(`${s.code||""} ${s.name||""} ${s.taxCode||""} ${s.phone||""}`).includes(normalizeText(q))).slice(0,12);return <div className="relative"><input className={inputCls} style={inputStyle} value={q} onFocus={()=>setOpen(true)} onChange={e=>{setQ(e.target.value);onPick(e.target.value);setOpen(true)}} placeholder="Gõ tên, mã NCC, MST..."/>{open&&q&&<div className="absolute z-50 left-0 right-0 top-full mt-1 max-h-56 overflow-auto rounded-md bg-white shadow-lg" style={{border:`1px solid ${TOKENS.border}`}}>{matches.map(s=><button type="button" key={s.id} className="block w-full text-left px-3 py-2 text-[12px] hover:bg-red-50" onClick={()=>{onPick(s.name);setQ(s.name);setOpen(false)}}><b>{s.code||"NCC"}</b> — {s.name}<div className="text-[10px]" style={{color:TOKENS.muted}}>{s.taxCode?`MST: ${s.taxCode}`:""}{s.phone?` · ${s.phone}`:""}</div></button>)}{!matches.length&&<div className="px-3 py-2 text-[12px]" style={{color:TOKENS.muted}}>Không tìm thấy trong danh mục — vẫn có thể dùng tên vừa nhập</div>}</div>}</div>}
 
 function SupplierCatalog({suppliers,isAdmin,onAdd,onEdit,onDeleteMany,onImportExcel,onExportExcel,onExportPdf}){
@@ -2200,6 +2222,63 @@ function WarehouseTxModal({ assets, projects, suppliers = [], onClose, onSubmit,
 function CostHistoryModal({ assets, onClose, onSubmit }) { const [f,setF]=useState({assetId:assets[0]?.id||"",type:"Cấp dầu",date:nowIso().slice(0,10),amount:0,description:"",vendor:""}); const set=k=>e=>setF({...f,[k]:e.target.value}); return <Modal title="Thêm chi phí thiết bị" onClose={onClose}><Field label="Tài sản"><select className={inputCls} style={inputStyle} value={f.assetId} onChange={set("assetId")}>{assets.map(a=><option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}</select></Field><Field label="Loại chi phí"><select className={inputCls} style={inputStyle} value={f.type} onChange={set("type")}><option>Cấp dầu</option><option>Thay cáp</option><option>Sửa chữa</option><option>Chi phí khác</option></select></Field><Field label="Ngày"><input type="date" className={inputCls} style={inputStyle} value={f.date} onChange={set("date")}/></Field><Field label="Số tiền"><input type="number" className={inputCls} style={inputStyle} value={f.amount} onChange={set("amount")}/></Field><Field label="Nội dung"><textarea className={inputCls} style={inputStyle} value={f.description} onChange={set("description")}/></Field><Field label="Nhà cung cấp"><input className={inputCls} style={inputStyle} value={f.vendor} onChange={set("vendor")}/></Field><div className="flex justify-end gap-2"><Btn onClick={onClose}>Huỷ</Btn><Btn kind="primary" onClick={()=>onSubmit(f)}>Lưu chi phí</Btn></div></Modal>; }
 
 /* ============================== SETTINGS ============================== */
+
+
+function MasterDataPage({ title, description, items = [], usage, onAdd, onRename, onRemove, importKind, onImportExcel, templateHeader, placeholder, isAdmin }) {
+  const [q,setQ]=useState("");
+  const [val,setVal]=useState("");
+  const [editing,setEditing]=useState(null);
+  const [editVal,setEditVal]=useState("");
+  const [selected,setSelected]=useState([]);
+  const fileRef=useRef(null);
+  const safeItems=Array.isArray(items)?items.filter(Boolean).map(String):[];
+  const rows=safeItems.filter(x=>normalizeText(x).includes(normalizeText(q)));
+  const all=rows.length>0&&rows.every(x=>selected.includes(x));
+  const add=()=>{const v=val.trim();if(!v)return;onAdd?.(v);setVal("");};
+  const removeOne=(name)=>{
+    const n=usage?.(name)||0;
+    if(n>0&&!window.confirm(`"${name}" đang được ${n} tài sản sử dụng. Xóa khỏi danh sách lựa chọn? Dữ liệu tài sản hiện có vẫn được giữ.`))return;
+    onRemove?.(name);setSelected(x=>x.filter(v=>v!==name));
+  };
+  const removeMany=()=>{
+    if(!selected.length)return;
+    if(!window.confirm(`Xóa ${selected.length} mục đã chọn khỏi danh sách lựa chọn?`))return;
+    selected.forEach(name=>onRemove?.(name));
+    setSelected([]);
+  };
+  const headers=["Tên danh mục","Số tài sản đang dùng"];
+  const exportRows=rows.map(x=>[x,usage?.(x)||0]);
+  const downloadTemplate=()=>downloadExcelTemplate(`Mau_${title.replaceAll(" ","_")}`,[templateHeader||"Tên"],[[placeholder?.replace(/^VD:\\s*/,"")||"Mẫu"]]);
+  return <div className="aa-fade">
+    <div className="flex items-start justify-between gap-3 mb-4">
+      <div><h1 className="aa-display text-xl font-semibold">{title}</h1><div className="text-[12px] mt-1" style={{color:TOKENS.muted}}>{description}</div></div>
+      <div className="flex gap-2 flex-wrap justify-end">
+        <Btn icon={Download} onClick={downloadTemplate}>Tải mẫu Excel</Btn>
+        {isAdmin&&<><input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)onImportExcel?.(f,importKind);e.target.value=""}}/><Btn kind="info" icon={UploadCloud} onClick={()=>fileRef.current?.click()}>Đổ Excel</Btn></>}
+      </div>
+    </div>
+    {isAdmin&&<div className="rounded-lg p-4 mb-4 flex gap-2" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}>
+      <input className={inputCls} style={inputStyle} value={val} onChange={e=>setVal(e.target.value)} placeholder={placeholder} onKeyDown={e=>e.key==="Enter"&&add()}/>
+      <Btn kind="primary" icon={Plus} onClick={add}>Thêm mới</Btn>
+    </div>}
+    <div className="flex items-center justify-between gap-3 mb-3">
+      <input className={inputCls} style={{...inputStyle,maxWidth:420}} value={q} onChange={e=>setQ(e.target.value)} placeholder={`Tìm ${title.toLowerCase()}...`}/>
+      {isAdmin&&selected.length>0&&<Btn kind="danger" icon={Trash2} onClick={removeMany}>Xóa {selected.length} mục</Btn>}
+    </div>
+    <div className="rounded-lg overflow-hidden" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}>
+      <table className="w-full">
+        <thead><tr><Th><input type="checkbox" checked={all} onChange={()=>setSelected(all?selected.filter(x=>!rows.includes(x)):[...new Set([...selected,...rows])])}/></Th><Th>Tên</Th><Th right>Số tài sản đang dùng</Th>{isAdmin&&<Th>Thao tác</Th>}</tr></thead>
+        <tbody>{rows.map(name=><tr key={name} className="aa-row">
+          <Td><input type="checkbox" checked={selected.includes(name)} onChange={e=>setSelected(e.target.checked?[...selected,name]:selected.filter(x=>x!==name))}/></Td>
+          <Td>{editing===name?<input autoFocus className={inputCls} style={inputStyle} value={editVal} onChange={e=>setEditVal(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&editVal.trim()){onRename?.(name,editVal.trim());setEditing(null)}}}/>:<span className="font-medium">{name}</span>}</Td>
+          <Td right mono>{usage?.(name)||0}</Td>
+          {isAdmin&&<Td><div className="flex gap-1">{editing===name?<><Btn small kind="primary" icon={Save} onClick={()=>{if(editVal.trim()){onRename?.(name,editVal.trim());setEditing(null)}}}>Lưu</Btn><Btn small onClick={()=>setEditing(null)}>Hủy</Btn></>:<Btn small icon={Pencil} onClick={()=>{setEditing(name);setEditVal(name)}}>Sửa</Btn>}<Btn small kind="danger" icon={Trash2} onClick={()=>removeOne(name)}>Xóa</Btn></div></Td>}
+        </tr>)}</tbody>
+      </table>
+      {!rows.length&&<EmptyState text="Chưa có dữ liệu phù hợp"/>}
+    </div>
+  </div>;
+}
 
 function EditableMasterList({ title, items, onAdd, onRemove, onRename, usage, placeholder, importKind, onImportExcel }) {
   const [val,setVal]=useState(""),[editing,setEditing]=useState(null),[editVal,setEditVal]=useState(""),fileRef=useRef(null);
