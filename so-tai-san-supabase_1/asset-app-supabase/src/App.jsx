@@ -1116,7 +1116,7 @@ export default function AssetManagementApp() {
 
           <div className="flex-1 min-w-0 flex">
             <div className="flex-1 min-w-0 p-6 overflow-y-auto aa-scroll">
-              {active === "overview" && <Overview data={data} counts={counts} projectName={projectName} />}
+              {active === "overview" && <Overview data={data} counts={counts} projectName={projectName} onNavigate={setActive} />}
               {active === "catalog" && (
                 <AssetCatalog
                   assets={filteredAssets} projectName={projectName} onSelect={setSelectedAssetId} selectedAssetId={selectedAssetId}
@@ -1409,7 +1409,36 @@ function BarChart({ bars, height = 168 }) {
   );
 }
 
-function Overview({ data, counts, projectName }) {
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (isNaN(d)) return null;
+  return Math.ceil((d - new Date()) / (1000 * 60 * 60 * 24));
+}
+
+function MaintenanceBadge({ days }) {
+  if (days == null) return <span style={{ color: TOKENS.muted }}>—</span>;
+  if (days < 0) return <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: TOKENS.dangerSoft, color: TOKENS.danger }}>Quá hạn</span>;
+  if (days <= 30) return <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: TOKENS.goldSoft, color: TOKENS.gold }}>Sắp đến hạn</span>;
+  return <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: TOKENS.brandSoft, color: TOKENS.brand }}>Còn hạn</span>;
+}
+
+function QuickActionCard({ icon: Icon, label, onClick }) {
+  return (
+    <button onClick={onClick} className="flex flex-col gap-2.5 rounded-lg p-4 text-left hover:shadow-sm transition-shadow"
+      style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+      <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: TOKENS.brandSoft }}>
+        <Icon size={16} style={{ color: TOKENS.brand }} />
+      </div>
+      <div className="text-[12.5px] font-medium" style={{ color: TOKENS.ink }}>{label}</div>
+      <div className="flex items-center gap-1 text-[11px]" style={{ color: TOKENS.brand }}>
+        Đi tới <ChevronRight size={12} />
+      </div>
+    </button>
+  );
+}
+
+function Overview({ data, counts, projectName, onNavigate }) {
   const breakdown = [
     { label: STATUS.ASSIGNED, value: counts[STATUS.ASSIGNED] },
     { label: STATUS.SHARED, value: counts[STATUS.SHARED] },
@@ -1421,8 +1450,26 @@ function Overview({ data, counts, projectName }) {
   ];
   const max = Math.max(1, ...breakdown.map((b) => b.value));
 
+  const maintenanceDue = data.assets
+    .filter((a) => a.warranty && a.warrantyEnd)
+    .map((a) => ({ ...a, daysLeft: daysUntil(a.warrantyEnd) }))
+    .filter((a) => a.daysLeft != null && a.daysLeft <= 60)
+    .sort((a, b) => a.daysLeft - b.daysLeft)
+    .slice(0, 6);
+
+  const recentTx = data.transactions.filter((t) => t.type === "xuat_kho" || t.type === "nhap_kho").slice(0, 5);
+
+  const quickActions = [
+    { icon: PackageMinus, label: "Phiếu xuất kho", target: "warehouse" },
+    { icon: PackagePlus, label: "Phiếu nhập kho", target: "warehouse" },
+    { icon: FileSpreadsheet, label: "Báo cáo nhập xuất tồn", target: "warehouse" },
+    { icon: HardDrive, label: "Chi phí thiết bị", target: "depreciation" },
+    { icon: Boxes, label: "Danh mục tài sản", target: "catalog" },
+    { icon: History, label: "Khấu hao tài sản", target: "depreciation" },
+  ];
+
   return (
-    <div className="aa-fade max-w-5xl">
+    <div className="aa-fade max-w-6xl">
       <div className="flex items-center justify-between mb-4">
         <h1 className="aa-display text-xl font-semibold">Tổng quan</h1>
         <div className="flex items-center gap-2 rounded-full px-3 py-1" style={{ background: TOKENS.brandSoft, color: TOKENS.brand }}>
@@ -1431,71 +1478,129 @@ function Overview({ data, counts, projectName }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-3 mb-3">
-        <StatCard label="Đang rảnh" value={counts[STATUS.UNUSED]} />
-        <StatCard label="Dùng chung" value={counts[STATUS.SHARED]} accent={TOKENS.info} />
-        <StatCard label="Đang sửa/bảo dưỡng" value={counts[STATUS.REPAIR]} accent={TOKENS.gold} />
-        <StatCard label="Hỏng/mất" value={counts[STATUS.BROKEN]} accent={TOKENS.danger} />
-      </div>
-      <div className="grid grid-cols-4 gap-3 mb-6">
-        <StatCard label="Đã chuyển team khác" value={counts[STATUS.TRANSFERRED_OUT]} />
-        <StatCard label="Còn bảo hành" value={counts.warranty} accent={TOKENS.brand} />
-        <StatCard label="Tổng công trình" value={data.projects.length} />
-        <StatCard label="Chi phí sửa chữa 2026" value={fmtVND(counts.repairCostThisYear)} accent={TOKENS.gold} />
+      {/* Hàng thẻ số liệu chính */}
+      <div className="grid grid-cols-3 gap-4 mb-4">
+        <div className="rounded-lg p-5 flex items-center gap-4" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+          <div className="w-11 h-11 rounded-lg flex items-center justify-center shrink-0" style={{ background: TOKENS.brandSoft }}>
+            <Boxes size={19} style={{ color: TOKENS.brand }} />
+          </div>
+          <div>
+            <div className="text-[12px]" style={{ color: TOKENS.muted }}>Tổng tài sản</div>
+            <div className="aa-display text-xl font-bold">{counts.total}</div>
+          </div>
+        </div>
+        <div className="rounded-lg p-5 flex items-center gap-4" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+          <div className="w-11 h-11 rounded-lg flex items-center justify-center shrink-0" style={{ background: TOKENS.goldSoft }}>
+            <HardDrive size={19} style={{ color: TOKENS.gold }} />
+          </div>
+          <div>
+            <div className="text-[12px]" style={{ color: TOKENS.muted }}>Tổng nguyên giá</div>
+            <div className="aa-display text-xl font-bold">{fmtVND(data.assets.reduce((s, a) => s + (a.cost || 0), 0))}</div>
+          </div>
+        </div>
+        <div className="rounded-lg p-5 flex items-center gap-4" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+          <div className="w-11 h-11 rounded-lg flex items-center justify-center shrink-0" style={{ background: TOKENS.infoSoft }}>
+            <HardHat size={19} style={{ color: TOKENS.info }} />
+          </div>
+          <div>
+            <div className="text-[12px]" style={{ color: TOKENS.muted }}>Đang tại công trình</div>
+            <div className="aa-display text-xl font-bold">{counts[STATUS.ASSIGNED]}</div>
+          </div>
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 mb-4">
-        <div className="rounded-lg p-5" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
-          <div className="text-[13px] font-medium mb-4">Tài sản theo loại</div>
-          <DonutChart
-            segments={Object.entries(
-              data.assets.reduce((acc, a) => { acc[a.category] = (acc[a.category] || 0) + 1; return acc; }, {})
-            ).map(([label, value], i) => ({ label, value, color: CHART_PALETTE[i % CHART_PALETTE.length] }))}
-          />
-        </div>
-        <div className="rounded-lg p-5" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
-          <div className="text-[13px] font-medium mb-4">Tài sản theo công trình</div>
-          <BarChart
-            bars={data.projects.map((p, i) => ({
-              label: p.name, value: data.assets.filter((a) => a.assignedTo === p.id).length, color: CHART_PALETTE[i % CHART_PALETTE.length],
-            }))}
-          />
-        </div>
-      </div>
+      {/* Bố cục chính: cột trái (biểu đồ + bảo trì), cột phải (kho) */}
+      <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: "1.6fr 1fr" }}>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="rounded-lg p-5" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+              <div className="text-[13px] font-medium mb-4">Tài sản theo loại</div>
+              <DonutChart
+                segments={Object.entries(
+                  data.assets.reduce((acc, a) => { acc[a.category] = (acc[a.category] || 0) + 1; return acc; }, {})
+                ).map(([label, value], i) => ({ label, value, color: CHART_PALETTE[i % CHART_PALETTE.length] }))}
+              />
+            </div>
+            <div className="rounded-lg p-5" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+              <div className="text-[13px] font-medium mb-4">Tài sản theo công trình</div>
+              <BarChart
+                bars={data.projects.map((p, i) => ({
+                  label: p.name, value: data.assets.filter((a) => a.assignedTo === p.id).length, color: CHART_PALETTE[i % CHART_PALETTE.length],
+                }))}
+              />
+              {data.projects.length === 0 && <EmptyState text="Chưa có công trình nào" />}
+            </div>
+          </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div className="rounded-lg p-5" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
-          <div className="text-[13px] font-medium mb-4">Phân bổ tài sản</div>
-          <div className="space-y-2.5">
-            {breakdown.map((b) => (
-              <div key={b.label} className="flex items-center gap-3">
-                <div className="w-[150px] text-[12px] shrink-0" style={{ color: TOKENS.muted }}>{b.label}</div>
-                <div className="flex-1 h-2 rounded-full" style={{ background: TOKENS.paper }}>
-                  <div className="h-2 rounded-full" style={{ width: `${(b.value / max) * 100}%`, background: STATUS_COLOR[b.label] }} />
+          <div className="rounded-lg overflow-hidden" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+            <div className="flex items-center justify-between px-5 pt-4 pb-1">
+              <div className="text-[13px] font-medium">Tài sản sắp hết hạn bảo trì</div>
+              <button onClick={() => onNavigate("catalog")} className="text-[11.5px]" style={{ color: TOKENS.brand }}>Xem tất cả</button>
+            </div>
+            <table className="w-full mt-2">
+              <thead><tr><Th>Mã tài sản</Th><Th>Tên tài sản</Th><Th>Loại</Th><Th>Hạn bảo trì</Th><Th right>Trạng thái</Th></tr></thead>
+              <tbody>
+                {maintenanceDue.map((a) => (
+                  <tr key={a.id} className="aa-row">
+                    <Td mono><Tag>{a.code}</Tag></Td><Td>{a.name}</Td><Td>{a.category}</Td>
+                    <Td mono>{fmtDate(a.warrantyEnd)}</Td>
+                    <Td right><MaintenanceBadge days={a.daysLeft} /></Td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {maintenanceDue.length === 0 && <EmptyState text="Không có tài sản nào sắp hết hạn bảo trì" sub="Trong vòng 60 ngày tới." />}
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="rounded-lg p-5" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+            <div className="text-[13px] font-medium mb-1">Kho — thao tác nhanh</div>
+            <div className="text-[11.5px] mb-3" style={{ color: TOKENS.muted }}>Lập phiếu nhập/xuất kho hoặc xem báo cáo tồn.</div>
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              <Btn kind="primary" icon={PackageMinus} onClick={() => onNavigate("warehouse")}>Xuất kho</Btn>
+              <Btn kind="info" icon={PackagePlus} onClick={() => onNavigate("warehouse")}>Nhập kho</Btn>
+            </div>
+            <div className="text-[12px] font-medium mb-2" style={{ color: TOKENS.ink }}>Giao dịch kho gần đây</div>
+            <div className="space-y-2">
+              {recentTx.map((t) => (
+                <div key={t.id} className="flex items-start gap-2 text-[12px]">
+                  <span style={{ width: 7, height: 7, borderRadius: 999, marginTop: 5, background: t.type === "nhap_kho" ? TOKENS.info : TOKENS.brand, flexShrink: 0 }} />
+                  <div className="min-w-0">
+                    <div className="truncate" style={{ color: TOKENS.ink }}>{t.title} · {t.detail}</div>
+                    <div className="aa-mono text-[11px]" style={{ color: TOKENS.muted }}>{fmtDate(t.date)}</div>
+                  </div>
                 </div>
-                <div className="w-6 text-right aa-mono text-[12px]">{b.value}</div>
-              </div>
-            ))}
+              ))}
+              {recentTx.length === 0 && <div className="text-[12px]" style={{ color: TOKENS.muted }}>Chưa có giao dịch kho nào.</div>}
+            </div>
+            <button onClick={() => onNavigate("warehouse")} className="w-full text-center mt-3 text-[11.5px] py-1.5 rounded-md" style={{ color: TOKENS.brand, background: TOKENS.brandSoft }}>
+              Xem báo cáo nhập xuất tồn
+            </button>
           </div>
-        </div>
 
-        <div className="rounded-lg p-5" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
-          <div className="text-[13px] font-medium mb-4">Phiếu đang xử lý</div>
-          {counts.openRepairs === 0 ? (
-            <EmptyState text="Không có phiếu sửa chữa đang mở" />
-          ) : (
-            <div className="text-[13px]" style={{ color: TOKENS.muted }}>{counts.openRepairs} phiếu sửa chữa đang chờ xử lý.</div>
-          )}
-          <div className="mt-5 text-[13px] font-medium mb-2">Gần đây</div>
-          <div className="space-y-2">
-            {data.activityLog.slice(-4).reverse().map((l) => (
-              <div key={l.id} className="text-[12px] flex items-start gap-2" style={{ color: TOKENS.muted }}>
-                <span className="aa-mono shrink-0">{fmtDate(l.date)}</span>
-                <span>{l.action}</span>
-              </div>
-            ))}
+          <div className="rounded-lg p-5" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+            <div className="text-[13px] font-medium mb-4">Phân bổ tài sản</div>
+            <div className="space-y-2.5">
+              {breakdown.map((b) => (
+                <div key={b.label} className="flex items-center gap-3">
+                  <div className="w-[128px] text-[11.5px] shrink-0 truncate" style={{ color: TOKENS.muted }}>{b.label}</div>
+                  <div className="flex-1 h-2 rounded-full" style={{ background: TOKENS.paper }}>
+                    <div className="h-2 rounded-full" style={{ width: `${(b.value / max) * 100}%`, background: STATUS_COLOR[b.label] }} />
+                  </div>
+                  <div className="w-6 text-right aa-mono text-[12px]">{b.value}</div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
+      </div>
+
+      {/* Dải thẻ truy cập nhanh */}
+      <div className="grid grid-cols-6 gap-3">
+        {quickActions.map((qa) => (
+          <QuickActionCard key={qa.label} icon={qa.icon} label={qa.label} onClick={() => onNavigate(qa.target)} />
+        ))}
       </div>
     </div>
   );
