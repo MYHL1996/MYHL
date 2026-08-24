@@ -1122,7 +1122,7 @@ export default function AssetManagementApp() {
                 <AssetCatalog
                   assets={filteredAssets} projectName={projectName} onSelect={setSelectedAssetId} selectedAssetId={selectedAssetId}
                   onAdd={() => setModal({ type: "addAsset" })} customColumns={settings.customColumns} isAdmin={isAdmin} onDelete={deleteAsset}
-                  onExportExcel={doExportExcel} onExportPdf={doExportPdf}
+                  onExportExcel={doExportExcel} onExportPdf={doExportPdf} onImportExcel={importExcel}
                 />
               )}
               {active === "byProject" && <ByProject data={data} projectName={projectName} onSelect={(id) => { setActive("catalog"); setSelectedAssetId(id); }} />}
@@ -1625,7 +1625,7 @@ function ExportBar({ onExcel, onPdf }) {
   );
 }
 
-function AssetCatalog({ assets, projectName, onSelect, selectedAssetId, onAdd, onDelete, isAdmin, customColumns = [], onExportExcel, onExportPdf }) {
+function AssetCatalog({ assets, projectName, onSelect, selectedAssetId, onAdd, onDelete, isAdmin, customColumns = [], onExportExcel, onExportPdf, onImportExcel }) {
   const headers = ["Mã quản lý", "Tên tài sản", "Loại", "Nhóm tài sản", "Công trình", "Nguồn", "Trạng thái", "Nguyên giá", ...customColumns.map((c) => c.label)];
   const buildRows = () => assets.map((a) => [
     a.code, a.name, a.category, a.assetGroup || "", projectName(a.projectId), a.ownership || "Công ty", a.status, a.cost,
@@ -1638,6 +1638,14 @@ function AssetCatalog({ assets, projectName, onSelect, selectedAssetId, onAdd, o
         <h1 className="aa-display text-xl font-semibold">Danh mục tài sản</h1>
         <div className="flex items-center gap-2">
           <ExportBar onExcel={() => onExportExcel("danh-muc-tai-san", headers, buildRows())} onPdf={() => onExportPdf("Danh mục tài sản", headers, buildRows())} />
+          {isAdmin && onImportExcel && (
+            <label className="inline-flex">
+              <input type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onImportExcel(f, "assets"); e.target.value = ""; }} />
+              <span className="inline-flex items-center gap-1.5 rounded-md font-medium px-3 py-1.5 text-[13px] cursor-pointer" style={{ background: TOKENS.info, color: "#fff" }}>
+                <UploadCloud size={14} />Nhập từ Excel
+              </span>
+            </label>
+          )}
           <Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm mới</Btn>
         </div>
       </div>
