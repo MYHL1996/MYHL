@@ -11,34 +11,31 @@ import {
 } from "lucide-react";
 
 /* ============================== DESIGN TOKENS ==============================
-Color:
-  paper       #F5F6F2  page background, unbleached ledger paper
-  surface     #FFFFFF  cards / table
-  ink         #1B2320  primary text, near-black warm green-charcoal
-  muted       #707A73  secondary text
-  border      #E2E5DE  hairlines
-  brand       #22594C  deep ledger green (primary actions, active nav)
-  brandSoft   #E6EEEA  brand tint
-  gold        #A9832E  brass accent — money / depreciation / value
-  goldSoft    #F5EEDC  gold tint
-  danger      #A23F3F  faults / liquidation
-  dangerSoft  #F5E6E5
-  info        #34607F  transfers / info
-  infoSoft    #E7EEF3
+Color — theo bộ nhận diện TMC (đỏ chủ đạo, nền sáng):
+  paper       #F7F4F3  nền trang
+  surface     #FFFFFF  thẻ / bảng
+  ink         #241A19  chữ chính
+  muted       #7C6E6D  chữ phụ
+  border      #EEE1DF  viền mảnh
+  brand       #C1272D  đỏ TMC — hành động chính, điều hướng đang chọn
+  brandSoft   #FBE8E8  sắc đỏ nhạt
+  gold        #C08A1E  vàng đồng — tiền/khấu hao/giá trị
+  goldSoft    #FAF0DC
+  danger      #C2410C  cam cháy — hỏng hóc/thanh lý (tách biệt với đỏ thương hiệu)
+  dangerSoft  #FBEAE0
+  info        #2C5F7C  xanh xám — chuyển đổi/thông tin
+  infoSoft    #E6EEF2
 Type:
-  Display: "Space Grotesk"  (nav headers, page titles, stamp numerals)
-  Body:    "IBM Plex Sans"  (everything else)
-  Mono:    "IBM Plex Mono"  (asset codes, money, dates — ledger data)
-Signature: sidebar rendered as a bound ledger spine (notch ticks + stamped
-  total), asset codes shown as mono "inventory tag" chips, status shown as
-  a wax-seal-style dot rather than a pill.
+  Display: "Space Grotesk"  (tiêu đề, số liệu lớn)
+  Body:    "IBM Plex Sans"  (nội dung chung)
+  Mono:    "IBM Plex Mono"  (mã tài sản, số tiền, ngày tháng)
 ============================================================================ */
 
 const TOKENS = {
-  paper: "#F5F6F2", surface: "#FFFFFF", ink: "#1B2320", muted: "#707A73",
-  border: "#E2E5DE", brand: "#22594C", brandSoft: "#E6EEEA",
-  gold: "#A9832E", goldSoft: "#F5EEDC", danger: "#A23F3F", dangerSoft: "#F5E6E5",
-  info: "#34607F", infoSoft: "#E7EEF3",
+  paper: "#F7F4F3", surface: "#FFFFFF", ink: "#241A19", muted: "#7C6E6D",
+  border: "#EEE1DF", brand: "#C1272D", brandSoft: "#FBE8E8",
+  gold: "#C08A1E", goldSoft: "#FAF0DC", danger: "#C2410C", dangerSoft: "#FBEAE0",
+  info: "#2C5F7C", infoSoft: "#E6EEF2",
 };
 
 const FONT_CSS = `
@@ -466,10 +463,10 @@ function LoginScreen({ onLogin }) {
       <style>{FONT_CSS}</style>
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-6">
-          <div className="w-11 h-11 rounded-lg flex items-center justify-center mb-3" style={{ background: TOKENS.gold }}>
-            <Stamp size={20} color="#1B2320" />
+          <div className="w-11 h-11 rounded-lg flex items-center justify-center mb-3" style={{ background: TOKENS.brand }}>
+            <Stamp size={20} color="#fff" />
           </div>
-          <div className="aa-display font-semibold text-[18px]" style={{ color: TOKENS.ink }}>SỔ TÀI SẢN</div>
+          <div className="aa-display font-bold text-[18px]" style={{ color: TOKENS.brand }}>SỔ TÀI SẢN</div>
           <div className="text-[12px]" style={{ color: TOKENS.muted }}>Quản lý tài sản nội bộ</div>
         </div>
 
@@ -1264,21 +1261,21 @@ function PrintArea({ job, companyName }) {
 
 function Sidebar({ active, setActive, data, counts, currentUser, isAdmin, onLogout, onChangePassword }) {
   return (
-    <div className="w-[236px] shrink-0 flex flex-col" style={{ background: TOKENS.ink, color: "#EDEFEA" }}>
-      <div className="px-5 pt-5 pb-4 flex items-center gap-2.5" style={{ borderBottom: "1px solid #ffffff1a" }}>
-        <div className="w-8 h-8 rounded-md flex items-center justify-center" style={{ background: TOKENS.gold }}>
-          <Stamp size={16} color="#1B2320" />
+    <div className="w-[240px] shrink-0 flex flex-col" style={{ background: TOKENS.surface, color: TOKENS.ink, borderRight: `1px solid ${TOKENS.border}` }}>
+      <div className="px-5 pt-5 pb-4 flex items-center gap-2.5" style={{ borderBottom: `1px solid ${TOKENS.border}` }}>
+        <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: TOKENS.brand }}>
+          <Stamp size={17} color="#fff" />
         </div>
         <div className="min-w-0">
-          <div className="aa-display font-semibold text-[14px] leading-tight">SỔ TÀI SẢN</div>
-          <div className="text-[11px] truncate" style={{ color: "#B9BFB6" }} title={data.settings.companyName}>{data.settings.companyName}</div>
+          <div className="aa-display font-bold text-[15px] leading-tight" style={{ color: TOKENS.brand, letterSpacing: "0.02em" }}>SỔ TÀI SẢN</div>
+          <div className="text-[11px] truncate" style={{ color: TOKENS.muted }} title={data.settings.companyName}>{data.settings.companyName}</div>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto aa-scroll py-3">
         {NAV.map((sec) => (
           <div key={sec.section} className="mb-4">
-            <div className="px-5 mb-1.5 text-[10.5px] tracking-wider font-medium" style={{ color: "#8A9088" }}>{sec.section}</div>
+            <div className="px-5 mb-1.5 text-[10.5px] tracking-wider font-semibold" style={{ color: "#C9B4B3" }}>{sec.section}</div>
             {sec.items.filter((it) => !it.adminOnly || isAdmin).map((it) => {
               const isActive = active === it.id;
               const count = it.badge === "assets" ? counts.total : it.badge === "projects" ? data.projects.length : null;
@@ -1286,13 +1283,17 @@ function Sidebar({ active, setActive, data, counts, currentUser, isAdmin, onLogo
                 <button
                   key={it.id}
                   onClick={() => setActive(it.id)}
-                  className="w-full flex items-center gap-2.5 px-5 py-2 text-[13px] relative"
-                  style={{ background: isActive ? "#ffffff14" : "transparent", color: isActive ? "#fff" : "#C9CEC4", fontWeight: isActive ? 600 : 400 }}
+                  className="w-full flex items-center gap-2.5 px-5 py-2 text-[13px] relative transition-colors"
+                  style={{
+                    background: isActive ? TOKENS.brandSoft : "transparent",
+                    color: isActive ? TOKENS.brand : "#5C5150",
+                    fontWeight: isActive ? 600 : 400,
+                  }}
                 >
-                  {isActive && <span style={{ position: "absolute", left: 0, top: 6, bottom: 6, width: 3, background: TOKENS.gold, borderRadius: 2 }} />}
+                  {isActive && <span style={{ position: "absolute", left: 0, top: 6, bottom: 6, width: 3, background: TOKENS.brand, borderRadius: 2 }} />}
                   <it.icon size={15} />
                   <span className="flex-1 text-left">{it.label}</span>
-                  {count != null && <span className="aa-mono text-[11px]" style={{ color: "#9AA096" }}>{count}</span>}
+                  {count != null && <span className="aa-mono text-[11px]" style={{ color: isActive ? TOKENS.brand : TOKENS.muted }}>{count}</span>}
                 </button>
               );
             })}
@@ -1300,20 +1301,20 @@ function Sidebar({ active, setActive, data, counts, currentUser, isAdmin, onLogo
         ))}
       </div>
 
-      <div className="px-5 py-3" style={{ borderTop: "1px solid #ffffff1a" }}>
+      <div className="px-5 py-3" style={{ borderTop: `1px solid ${TOKENS.border}` }}>
         <div className="flex items-center gap-2.5 mb-2.5">
           <div className="w-7 h-7 rounded-full flex items-center justify-center aa-display font-semibold text-[11px] shrink-0"
-            style={{ background: currentUser.role === "admin" ? TOKENS.gold : TOKENS.info, color: "#fff" }}>
+            style={{ background: currentUser.role === "admin" ? TOKENS.brand : TOKENS.info, color: "#fff" }}>
             {currentUser.name[0]?.toUpperCase()}
           </div>
           <div className="min-w-0">
-            <div className="text-[12.5px] font-medium truncate" style={{ color: "#EDEFEA" }}>{currentUser.name}</div>
-            <div className="text-[10.5px] truncate" style={{ color: currentUser.role === "admin" ? "#E4C878" : "#9FC3DE" }}>{ROLES[currentUser.role].label}</div>
+            <div className="text-[12.5px] font-medium truncate" style={{ color: TOKENS.ink }}>{currentUser.name}</div>
+            <div className="text-[10.5px] truncate" style={{ color: currentUser.role === "admin" ? TOKENS.brand : TOKENS.info }}>{ROLES[currentUser.role].label}</div>
           </div>
-          <button onClick={onChangePassword} title="Đổi mật khẩu" className="ml-auto p-1.5 rounded hover:bg-white/10 shrink-0"><Lock size={13} /></button>
-          <button onClick={onLogout} title="Đăng xuất" className="p-1.5 rounded hover:bg-white/10 shrink-0"><LogOut size={14} /></button>
+          <button onClick={onChangePassword} title="Đổi mật khẩu" className="ml-auto p-1.5 rounded hover:bg-black/5 shrink-0"><Lock size={13} /></button>
+          <button onClick={onLogout} title="Đăng xuất" className="p-1.5 rounded hover:bg-black/5 shrink-0"><LogOut size={14} /></button>
         </div>
-        <div className="text-[10px]" style={{ color: "#8A9088" }}>
+        <div className="text-[10px]" style={{ color: TOKENS.muted }}>
           Dữ liệu dùng chung — mọi thành viên đều thấy cùng một sổ tài sản.
         </div>
       </div>
@@ -1345,6 +1346,69 @@ function TopBar({ query, setQuery, data, saving, onRefresh }) {
 
 /* ============================== OVERVIEW ============================== */
 
+/* ---------- lightweight SVG charts (no extra dependency) ---------- */
+
+const CHART_PALETTE = [TOKENS.brand, "#E07A5F", TOKENS.gold, TOKENS.info, "#8B5CF6", "#4C956C", "#7C6E6D"];
+
+function DonutChart({ segments, size = 168, thickness = 22 }) {
+  const total = segments.reduce((s, x) => s + x.value, 0) || 1;
+  const r = (size - thickness) / 2;
+  const cx = size / 2, cy = size / 2;
+  const circumference = 2 * Math.PI * r;
+  let offset = 0;
+  return (
+    <div className="flex items-center gap-5">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke={TOKENS.paper} strokeWidth={thickness} />
+        {segments.filter((s) => s.value > 0).map((s, i) => {
+          const frac = s.value / total;
+          const dash = frac * circumference;
+          const el = (
+            <circle
+              key={s.label}
+              cx={cx} cy={cy} r={r} fill="none"
+              stroke={s.color}
+              strokeWidth={thickness}
+              strokeDasharray={`${dash} ${circumference - dash}`}
+              strokeDashoffset={-offset}
+              transform={`rotate(-90 ${cx} ${cy})`}
+              strokeLinecap={segments.filter((x) => x.value > 0).length === 1 ? "butt" : "butt"}
+            />
+          );
+          offset += dash;
+          return el;
+        })}
+        <text x={cx} y={cy - 3} textAnchor="middle" className="aa-display" style={{ fontSize: 20, fontWeight: 700, fill: TOKENS.ink }}>{total}</text>
+        <text x={cx} y={cy + 14} textAnchor="middle" style={{ fontSize: 10, fill: TOKENS.muted }}>thiết bị</text>
+      </svg>
+      <div className="space-y-1.5 min-w-0">
+        {segments.filter((s) => s.value > 0).map((s) => (
+          <div key={s.label} className="flex items-center gap-1.5 text-[12px]">
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: s.color, display: "inline-block", flexShrink: 0 }} />
+            <span className="truncate" style={{ color: TOKENS.ink }}>{s.label}</span>
+            <span className="aa-mono shrink-0" style={{ color: TOKENS.muted }}>{Math.round((s.value / total) * 100)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BarChart({ bars, height = 168 }) {
+  const max = Math.max(1, ...bars.map((b) => b.value));
+  return (
+    <div className="flex items-end gap-3" style={{ height }}>
+      {bars.map((b) => (
+        <div key={b.label} className="flex-1 flex flex-col items-center gap-1.5 min-w-0">
+          <div className="text-[11px] aa-mono" style={{ color: TOKENS.muted }}>{b.value}</div>
+          <div className="w-full rounded-t-md" style={{ height: Math.max(4, (b.value / max) * (height - 40)), background: b.color || TOKENS.brand }} />
+          <div className="text-[10.5px] text-center truncate w-full" style={{ color: TOKENS.muted }} title={b.label}>{b.label}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Overview({ data, counts, projectName }) {
   const breakdown = [
     { label: STATUS.ASSIGNED, value: counts[STATUS.ASSIGNED] },
@@ -1361,7 +1425,7 @@ function Overview({ data, counts, projectName }) {
     <div className="aa-fade max-w-5xl">
       <div className="flex items-center justify-between mb-4">
         <h1 className="aa-display text-xl font-semibold">Tổng quan</h1>
-        <div className="flex items-center gap-2 rounded-full px-3 py-1" style={{ background: TOKENS.goldSoft, color: TOKENS.gold }}>
+        <div className="flex items-center gap-2 rounded-full px-3 py-1" style={{ background: TOKENS.brandSoft, color: TOKENS.brand }}>
           <Stamp size={14} />
           <span className="aa-display text-[13px] font-semibold">{counts.total} tài sản</span>
         </div>
@@ -1378,6 +1442,25 @@ function Overview({ data, counts, projectName }) {
         <StatCard label="Còn bảo hành" value={counts.warranty} accent={TOKENS.brand} />
         <StatCard label="Tổng công trình" value={data.projects.length} />
         <StatCard label="Chi phí sửa chữa 2026" value={fmtVND(counts.repairCostThisYear)} accent={TOKENS.gold} />
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="rounded-lg p-5" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+          <div className="text-[13px] font-medium mb-4">Tài sản theo loại</div>
+          <DonutChart
+            segments={Object.entries(
+              data.assets.reduce((acc, a) => { acc[a.category] = (acc[a.category] || 0) + 1; return acc; }, {})
+            ).map(([label, value], i) => ({ label, value, color: CHART_PALETTE[i % CHART_PALETTE.length] }))}
+          />
+        </div>
+        <div className="rounded-lg p-5" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+          <div className="text-[13px] font-medium mb-4">Tài sản theo công trình</div>
+          <BarChart
+            bars={data.projects.map((p, i) => ({
+              label: p.name, value: data.assets.filter((a) => a.assignedTo === p.id).length, color: CHART_PALETTE[i % CHART_PALETTE.length],
+            }))}
+          />
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
