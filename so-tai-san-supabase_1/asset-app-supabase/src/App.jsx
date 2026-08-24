@@ -1,1891 +1,490 @@
 /*
-  MYHL-QUẢN LÝ TÀI SẢN
-  WAREHOUSE CORE V8 — 24/08/2026
+ MYHL-QUẢN LÝ TÀI SẢN
+ WAREHOUSE CORE V9 FIXED — 24/08/2026
 
-  Mục tiêu V8
-  ===========
-  1. DANH MỤC TÀI SẢN = MASTER DATA.
-     Import danh mục chỉ cập nhật định danh tài sản.
-     TUYỆT ĐỐI KHÔNG tạo phiếu nhập/xuất và không tạo tồn.
+ This file is a STANDALONE module. It does NOT depend on App.jsx helper names.
+ Import it from App.jsx:
+   import {
+     WarehouseCoreV9,
+     makeWarehouseReportV9,
+     importAssetCatalogV9,
+     importWarehouseExcelV9,
+     downloadWarehouseTemplateV9,
+   } from "./MYHL_WAREHOUSE_CORE_V9_FIXED";
 
-  2. PHIẾU NHẬP / PHIẾU XUẤT = TRANSACTION.
-     Chỉ giao dịch kho mới làm phát sinh tồn.
-
-  3. Khi lập phiếu:
-     - Gõ tự do tên tài sản hoặc mã hàng.
-     - Có danh sách gợi ý autocomplete.
-     - Tìm không phân biệt hoa/thường và dấu tiếng Việt.
-       Ví dụ: "may xuc", "Máy xúc", "MX-01" đều tìm được.
-     - Chọn tài sản => tự lấy mã, loại, nhóm, nguồn gốc, ĐVT.
-     - Không phải nhập lại master data.
-
-  4. Tồn được tính theo:
-       Tài sản + Kho/Công trình + đến ngày.
-
-  5. XÓA PHIẾU:
-     - Admin mới được xóa.
-     - Chọn nhiều phiếu rồi xóa hàng loạt.
-     - Có "Chọn tất cả kết quả đang lọc".
-     - Có thể xóa theo số phiếu.
-     - Khi xóa warehouse transaction thì đồng thời xóa transaction lịch sử
-       tương ứng, tránh còn "lịch sử giao dịch ma".
-
-  6. Import:
-     - Import DANH MỤC => chỉ assets.
-     - Import PHIẾU KHO => chỉ warehouse + transactions.
-     - Import phiếu kiểm tra toàn bộ trước; có lỗi => không ghi dòng nào.
-
-  7. Ngày:
-     - Không dùng new Date("YYYY-MM-DD") để tính ngày nghiệp vụ.
-     - Giữ calendar date dạng YYYY-MM-DD.
-     - 24/08/2026 luôn là 24/08/2026.
-
-  8. Không tự tạo "Tồn đầu kỳ" từ assets.
-     Có trong danh mục không đồng nghĩa có trong kho/công trình.
-
-  Core này dùng các helper đã có trong App.jsx:
-    Modal, Field, Btn, Th, Td, Tag, EmptyState, ExportBar,
-    inputCls, inputStyle, TOKENS, uid, nowIso, fmtVND,
-    XLSX, Search, X, UploadCloud, DownloadCloud.
-
-  ============================================================
-  TÍCH HỢP VỚI APP.JSX
-  ============================================================
-  A. Thay WarehouseTxModal cũ bằng WarehouseTxModalV8.
-
-  B. Handler lưu phiếu:
-       const ok = createWarehouseTransactionV8({
-         form, data, setData, requireAdmin, notify, logAction
-       });
-       if (ok) setModal(null);
-
-  C. Danh mục:
-       importAssetCatalogV8({
-         file, data, setData, requireAdmin, notify, logAction
-       });
-
-  D. Phiếu Excel:
-       importWarehouseExcelV8({
-         file, data, setData, requireAdmin, notify, logAction
-       });
-
-  E. Xóa hàng loạt:
-       deleteWarehouseTransactionsV8({
-         ids: selectedIds,
-         data,
-         setData,
-         requireAdmin,
-         notify,
-         logAction
-       });
-
-  F. Báo cáo:
-       const report = makeWarehouseReportV8({
-         warehouse: data.warehouse,
-         assets: data.assets,
-         projects: data.projects,
-         filter
-       });
-
-  G. QUAN TRỌNG:
-       Không giữ handler addWarehouseTx / importWarehouseExcel / WarehouseTxModal
-       cũ song song với V8 nếu chúng vẫn được render.
-       Chỉ một nguồn logic kho được sử dụng.
-
-  H. KHÔNG:
-       - seed lại dữ liệu
-       - DROP TABLE
-       - DELETE app_data
-       - đổi VITE_SUPABASE_URL
-       - đổi VITE_SUPABASE_ANON_KEY
+ Important:
+ - Do not paste this file into App.jsx.
+ - Do not keep the old V8 block active.
+ - The catalog is MASTER DATA only and never creates warehouse transactions.
+ - Warehouse transactions alone create stock.
 */
 
-/* ============================================================
-   1. TEXT / DATE
-============================================================ */
+import React, { useMemo, useState, useEffect, useRef } from "react";
+import * as XLSX from "xlsx";
 
-function wh8Text(v) {
-  return String(v ?? "").trim();
-}
+const BRAND = "#C1272D";
+const BRAND_SOFT = "#FBE8E8";
+const PAPER = "#F7F4F3";
+const SURFACE = "#FFFFFF";
+const INK = "#241A19";
+const MUTED = "#7C6E6D";
+const BORDER = "#EEE1DF";
+const DANGER = "#B42318";
+const GOLD = "#C08A1E";
 
-function wh8SearchText(v) {
-  return wh8Text(v)
+function text(v) { return String(v ?? "").trim(); }
+
+function searchText(v) {
+  return text(v)
     .toLocaleLowerCase("vi-VN")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/đ/g, "d")
-    .replace(/Đ/g, "D")
-    .normalize("NFC");
+    .replace(/đ/g, "d");
 }
 
-function wh8Key(v) {
-  return wh8SearchText(v);
-}
-
-function wh8Date(value) {
-  if (value === null || value === undefined || value === "") return "";
-
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return [
-      value.getFullYear(),
-      String(value.getMonth() + 1).padStart(2, "0"),
-      String(value.getDate()).padStart(2, "0"),
-    ].join("-");
+function dateKey(v) {
+  if (v == null || v === "") return "";
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    return `${v.getFullYear()}-${String(v.getMonth()+1).padStart(2,"0")}-${String(v.getDate()).padStart(2,"0")}`;
   }
-
-  if (typeof value === "number" && Number.isFinite(value)) {
+  if (typeof v === "number" && Number.isFinite(v)) {
     try {
-      const d = XLSX.SSF.parse_date_code(value);
-      if (d && d.y && d.m && d.d) {
-        return `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
-      }
-    } catch (_) {}
+      const d = XLSX.SSF.parse_date_code(v);
+      if (d?.y && d?.m && d?.d) return `${d.y}-${String(d.m).padStart(2,"0")}-${String(d.d).padStart(2,"0")}`;
+    } catch {}
   }
-
-  const s = wh8Text(value);
-  if (!s) return "";
-
+  const s = text(v);
   let m = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})$/);
-  if (m) {
-    return `${m[3]}-${String(m[2]).padStart(2, "0")}-${String(m[1]).padStart(2, "0")}`;
-  }
-
+  if (m) return `${m[3]}-${String(m[2]).padStart(2,"0")}-${String(m[1]).padStart(2,"0")}`;
   m = s.match(/^(\d{4})[\/.\-](\d{1,2})[\/.\-](\d{1,2})$/);
-  if (m) {
-    return `${m[1]}-${String(m[2]).padStart(2, "0")}-${String(m[3]).padStart(2, "0")}`;
-  }
-
+  if (m) return `${m[1]}-${String(m[2]).padStart(2,"0")}-${String(m[3]).padStart(2,"0")}`;
   m = s.match(/^(\d{4}-\d{2}-\d{2})(?:T|\s)/);
   if (m) return m[1];
-
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-
-  return "";
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "";
 }
 
-function wh8DateVN(value) {
-  const d = wh8Date(value);
+function dateVN(v) {
+  const d = dateKey(v);
   if (!d) return "";
-  const [y, m, day] = d.split("-");
+  const [y,m,day] = d.split("-");
   return `${day}/${m}/${y}`;
 }
 
-function wh8IsNhap(tx) {
-  const t = wh8Key(tx?.type || tx?.loaiPhieu);
-  return t === "nhap" || t.includes("nhap");
+function uid(prefix="id") {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,9)}`;
 }
 
-function wh8IsXuat(tx) {
-  const t = wh8Key(tx?.type || tx?.loaiPhieu);
-  return t === "xuat" || t.includes("xuat");
-}
-
-/* ============================================================
-   2. LOCATION
-============================================================ */
-
-function wh8Location(tx, projects = []) {
-  if (wh8Text(tx?.locationName)) return wh8Text(tx.locationName);
-
-  if (tx?.locationType === "project" && tx?.projectId) {
+function locationOf(tx, projects=[]) {
+  if (text(tx?.locationName)) return text(tx.locationName);
+  if (tx?.projectId) {
     const p = projects.find(x => x.id === tx.projectId);
-    if (p?.name) return wh8Text(p.name);
+    if (p?.name) return text(p.name);
   }
-
-  if (wh8Text(tx?.warehouseName)) return wh8Text(tx.warehouseName);
-
+  if (text(tx?.warehouseName)) return text(tx.warehouseName);
   return "Kho trung tâm";
 }
 
-function wh8ProjectByName(projects, name) {
-  const k = wh8Key(name);
-  return (projects || []).find(p => wh8Key(p.name) === k) || null;
+function isIn(tx) {
+  const t = searchText(tx?.type || tx?.loaiPhieu);
+  return t === "nhap" || t.includes("nhap");
 }
 
-/* ============================================================
-   3. RESOLVE ASSET
-============================================================ */
-
-function resolveWarehouseAssetV8({ row, assets = [] }) {
-  const code = wh8Text(
-    row?.["Mã hàng"] ||
-    row?.["Mã quản lý"] ||
-    row?.["Mã tài sản"] ||
-    row?.code
-  );
-
-  const name = wh8Text(
-    row?.["Tên tài sản"] ||
-    row?.["Tên hàng"] ||
-    row?.["Tên thiết bị"] ||
-    row?.name
-  );
-
-  const byCode = code
-    ? assets.find(a => wh8Key(a.code) === wh8Key(code))
-    : null;
-
-  const byName = name
-    ? assets.find(a => wh8Key(a.name) === wh8Key(name))
-    : null;
-
-  if (byCode && byName && byCode.id !== byName.id) {
-    return {
-      asset: null,
-      error: `Mã "${code}" và Tên "${name}" không cùng một tài sản.`
-    };
-  }
-
-  const asset = byCode || byName;
-
-  if (!asset) {
-    return {
-      asset: null,
-      error: `Không tìm thấy tài sản theo mã "${code}" hoặc tên "${name}".`
-    };
-  }
-
-  return { asset, error: "" };
+function isOut(tx) {
+  const t = searchText(tx?.type || tx?.loaiPhieu);
+  return t === "xuat" || t.includes("xuat");
 }
 
-function resolveExistingWarehouseAssetV8(tx, assets = []) {
+function resolveAsset(tx, assets=[]) {
   if (tx?.assetId) {
-    const byId = assets.find(a => a.id === tx.assetId);
-    if (byId) return byId;
+    const a = assets.find(x => x.id === tx.assetId);
+    if (a) return a;
   }
-
   const code = tx?.itemCode || tx?.code || tx?.maHang || tx?.maQuanLy;
   if (code) {
-    const byCode = assets.find(a => wh8Key(a.code) === wh8Key(code));
-    if (byCode) return byCode;
+    const a = assets.find(x => searchText(x.code) === searchText(code));
+    if (a) return a;
   }
-
   const name = tx?.itemName || tx?.name || tx?.tenTaiSan || tx?.tenHang;
   if (name) {
-    const byName = assets.find(a => wh8Key(a.name) === wh8Key(name));
-    if (byName) return byName;
+    const a = assets.find(x => searchText(x.name) === searchText(name));
+    if (a) return a;
   }
-
   return null;
 }
 
-/* ============================================================
-   4. SEARCH AUTOCOMPLETE
-============================================================ */
-
-function searchWarehouseAssetsV8(assets = [], query = "", limit = 20) {
-  const q = wh8Key(query);
-
-  if (!q) return assets.slice(0, limit);
-
-  return assets
-    .map(a => {
-      const fields = [
-        a.code,
-        a.name,
-        a.serial,
-        a.category,
-        a.assetGroup,
-        a.ownership,
-      ].map(wh8SearchText);
-
-      let score = 0;
-      if (fields[0] === q) score += 1000;
-      if (fields[1] === q) score += 900;
-      if (fields[0].startsWith(q)) score += 500;
-      if (fields[1].startsWith(q)) score += 450;
-      if (fields.some(x => x.includes(q))) score += 100;
-      if (fields[0].includes(q)) score += 60;
-      if (fields[1].includes(q)) score += 50;
-
-      return { asset: a, score };
-    })
-    .filter(x => x.score > 0)
-    .sort((a, b) => b.score - a.score || wh8Key(a.asset.name).localeCompare(wh8Key(b.asset.name), "vi"))
-    .slice(0, limit)
-    .map(x => x.asset);
+function resolveAssetFromRow(row, assets=[]) {
+  const code = text(row?.["Mã hàng"] || row?.["Mã quản lý"] || row?.["Mã tài sản"] || row?.code);
+  const name = text(row?.["Tên tài sản"] || row?.["Tên hàng"] || row?.["Tên thiết bị"] || row?.name);
+  const byCode = code ? assets.find(a => searchText(a.code) === searchText(code)) : null;
+  const byName = name ? assets.find(a => searchText(a.name) === searchText(name)) : null;
+  if (byCode && byName && byCode.id !== byName.id) return { error: `Mã "${code}" và Tên "${name}" không cùng một tài sản.` };
+  if (!byCode && !byName) return { error: `Không tìm thấy tài sản theo mã "${code}" hoặc tên "${name}".` };
+  return { asset: byCode || byName };
 }
 
-/* ============================================================
-   5. AUTOCOMPLETE UI
-============================================================ */
-
-function WarehouseAssetAutocompleteV8({
-  assets = [],
-  value = "",
-  onChange,
-  disabled = false,
-}) {
-  const selected = assets.find(a => a.id === value) || null;
-  const [query, setQuery] = React.useState("");
-  const [open, setOpen] = React.useState(false);
-
-  React.useEffect(() => {
-    if (selected) {
-      setQuery(`${selected.code || ""} — ${selected.name || ""}`);
-    } else if (!value) {
-      setQuery("");
-    }
-  }, [value, selected?.id]);
-
-  const results = React.useMemo(
-    () => searchWarehouseAssetsV8(assets, query, 25),
-    [assets, query]
-  );
-
-  const choose = asset => {
-    setQuery(`${asset.code || ""} — ${asset.name || ""}`);
-    setOpen(false);
-    onChange?.(asset.id);
-  };
-
-  return (
-    <div className="relative">
-      <input
-        className={inputCls}
-        style={inputStyle}
-        disabled={disabled}
-        value={query}
-        autoComplete="off"
-        placeholder="Gõ tên hoặc mã tài sản..."
-        onFocus={() => setOpen(true)}
-        onChange={e => {
-          setQuery(e.target.value);
-          setOpen(true);
-          if (!e.target.value.trim()) onChange?.("");
-        }}
-        onKeyDown={e => {
-          if (e.key === "Escape") setOpen(false);
-        }}
-      />
-
-      {open && !disabled && (
-        <div
-          className="absolute z-[100] left-0 right-0 mt-1 max-h-72 overflow-auto rounded-lg shadow-xl"
-          style={{
-            background: TOKENS.surface,
-            border: `1px solid ${TOKENS.border}`,
-          }}
-          onMouseDown={e => e.preventDefault()}
-        >
-          {results.length ? (
-            results.map(a => (
-              <button
-                type="button"
-                key={a.id}
-                className="w-full text-left px-3 py-2.5 hover:bg-black/[0.03]"
-                onClick={() => choose(a)}
-              >
-                <div className="text-[13px] font-medium">
-                  {a.code || "—"} — {a.name || "—"}
-                </div>
-                <div
-                  className="text-[11px] mt-0.5"
-                  style={{ color: TOKENS.muted }}
-                >
-                  {a.category || "Chưa phân loại"} ·{" "}
-                  {a.assetGroup || "Chưa có nhóm"} ·{" "}
-                  {a.ownership || "Chưa có nguồn gốc"}
-                </div>
-              </button>
-            ))
-          ) : (
-            <div
-              className="px-3 py-4 text-[12px]"
-              style={{ color: TOKENS.muted }}
-            >
-              Không tìm thấy tài sản theo mã hoặc tên.
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ============================================================
-   6. STOCK ENGINE
-============================================================ */
-
-function getWarehouseStockV8({
-  warehouse = [],
-  assets = [],
-  projects = [],
-  assetId,
-  locationName,
-  asOfDate,
-}) {
-  const cutoff = wh8Date(asOfDate) || "9999-12-31";
-  const locKey = wh8Key(locationName);
-
+export function getWarehouseStockV9({ warehouse=[], assets=[], projects=[], assetId, locationName, asOfDate }) {
+  const cut = dateKey(asOfDate) || "9999-12-31";
+  const loc = searchText(locationName);
   return warehouse.reduce((sum, tx) => {
-    const date = wh8Date(tx.date || tx.ngayThang);
-    if (!date || date > cutoff) return sum;
-
-    const asset = resolveExistingWarehouseAssetV8(tx, assets);
-    if (!asset || asset.id !== assetId) return sum;
-
-    if (wh8Key(wh8Location(tx, projects)) !== locKey) return sum;
-
-    const qty = Number(tx.quantity ?? tx.soLuong ?? 0) || 0;
-
-    if (wh8IsNhap(tx)) return sum + qty;
-    if (wh8IsXuat(tx)) return sum - qty;
-    return sum;
+    const d = dateKey(tx.date || tx.ngayThang);
+    if (!d || d > cut) return sum;
+    const a = resolveAsset(tx, assets);
+    if (!a || a.id !== assetId) return sum;
+    if (searchText(locationOf(tx, projects)) !== loc) return sum;
+    const q = Number(tx.quantity ?? tx.soLuong ?? 0) || 0;
+    return isIn(tx) ? sum + q : isOut(tx) ? sum - q : sum;
   }, 0);
 }
 
-function buildWarehouseBalancesV8({
-  warehouse = [],
-  assets = [],
-  projects = [],
-  asOfDate,
-}) {
-  const cutoff = wh8Date(asOfDate) || "9999-12-31";
-  const balances = {};
+export function makeWarehouseReportV9({ warehouse=[], assets=[], projects=[], filter={} }) {
+  const cut = dateKey(filter.asOfDate) || "9999-12-31";
+  const map = new Map();
 
-  warehouse.forEach(tx => {
-    const date = wh8Date(tx.date || tx.ngayThang);
-    if (!date || date > cutoff) return;
-
-    const asset = resolveExistingWarehouseAssetV8(tx, assets);
-    if (!asset) return;
-
-    const location = wh8Location(tx, projects);
-    const key = `${asset.id}¦${wh8Key(location)}`;
-
-    if (!balances[key]) {
-      balances[key] = {
-        assetId: asset.id,
-        code: asset.code || tx.itemCode || "",
-        name: asset.name || tx.itemName || "",
-        location,
-        category: asset.category || tx.category || "Khác",
-        group: asset.assetGroup || tx.assetGroup || "Thiết bị chính",
-        ownership: asset.ownership || tx.ownership || "Công ty",
-        unit: asset.unit || tx.unit || "Cái",
-        inQty: 0,
-        outQty: 0,
-        inValue: 0,
-        outValue: 0,
-      };
+  for (const tx of warehouse) {
+    const d = dateKey(tx.date || tx.ngayThang);
+    if (!d || d > cut) continue;
+    const a = resolveAsset(tx, assets);
+    if (!a) continue;
+    const loc = locationOf(tx, projects);
+    const key = `${a.id}¦${searchText(loc)}`;
+    if (!map.has(key)) {
+      map.set(key, {
+        assetId:a.id, code:a.code || tx.itemCode || "", name:a.name || tx.itemName || "",
+        location:loc, category:a.category || tx.category || "Khác",
+        group:a.assetGroup || tx.assetGroup || "Thiết bị chính",
+        ownership:a.ownership || tx.ownership || "Công ty",
+        unit:a.unit || tx.unit || "Cái", inQty:0,outQty:0,inValue:0,outValue:0
+      });
     }
+    const r = map.get(key);
+    const q = Number(tx.quantity ?? tx.soLuong ?? 0) || 0;
+    const valueRaw = Number(tx.total ?? tx.thanhTien);
+    const value = Number.isFinite(valueRaw) ? valueRaw : q * (Number(tx.unitCost ?? tx.unitPrice ?? tx.donGia ?? 0) || 0);
+    if (isIn(tx)) { r.inQty += q; r.inValue += value; }
+    else if (isOut(tx)) { r.outQty += q; r.outValue += value; }
+  }
 
-    const qty = Number(tx.quantity ?? tx.soLuong ?? 0) || 0;
-    const unitCost = Number(tx.unitCost ?? tx.unitPrice ?? tx.donGia ?? 0) || 0;
-    const rawTotal = Number(tx.total ?? tx.thanhTien);
-    const total = Number.isFinite(rawTotal) ? rawTotal : qty * unitCost;
-
-    if (wh8IsNhap(tx)) {
-      balances[key].inQty += qty;
-      balances[key].inValue += total;
-    } else if (wh8IsXuat(tx)) {
-      balances[key].outQty += qty;
-      balances[key].outValue += total;
-    }
-  });
-
-  return Object.values(balances).map(r => ({
-    ...r,
-    balanceQty: r.inQty - r.outQty,
-    balanceValue: r.inValue - r.outValue,
+  let rows = [...map.values()].map(r => ({
+    ...r, balanceQty:r.inQty-r.outQty, balanceValue:r.inValue-r.outValue
   }));
-}
 
-function makeWarehouseReportV8({
-  warehouse = [],
-  assets = [],
-  projects = [],
-  filter = {},
-}) {
-  const all = buildWarehouseBalancesV8({
-    warehouse,
-    assets,
-    projects,
-    asOfDate: filter.asOfDate,
-  });
-
-  const rows = all
-    .filter(r => !filter.category || wh8Key(r.category) === wh8Key(filter.category))
-    .filter(r => !filter.group || wh8Key(r.group) === wh8Key(filter.group))
-    .filter(r => !filter.ownership || wh8Key(r.ownership) === wh8Key(filter.ownership))
-    .filter(r => !filter.locationName || wh8Key(r.location) === wh8Key(filter.locationName))
-    .filter(r => {
-      if (!filter.projectId) return true;
-      const p = projects.find(x => x.id === filter.projectId);
-      return !!p && wh8Key(p.name) === wh8Key(r.location);
-    })
-    .filter(r => r.balanceQty > 0)
-    .sort((a, b) =>
-      `${a.location}|${a.group}|${a.category}|${a.code}|${a.name}`
-        .localeCompare(
-          `${b.location}|${b.group}|${b.category}|${b.code}|${b.name}`,
-          "vi"
-        )
-    );
+  if (filter.category) rows = rows.filter(r => searchText(r.category) === searchText(filter.category));
+  if (filter.group) rows = rows.filter(r => searchText(r.group) === searchText(filter.group));
+  if (filter.ownership) rows = rows.filter(r => searchText(r.ownership) === searchText(filter.ownership));
+  if (filter.locationName) rows = rows.filter(r => searchText(r.location) === searchText(filter.locationName));
+  if (filter.projectId) {
+    const p = projects.find(x => x.id === filter.projectId);
+    rows = rows.filter(r => p && searchText(r.location) === searchText(p.name));
+  }
+  rows = rows.filter(r => r.balanceQty > 0).sort((a,b) =>
+    `${a.location}|${a.group}|${a.category}|${a.code}|${a.name}`.localeCompare(
+      `${b.location}|${b.group}|${b.category}|${b.code}|${b.name}`, "vi"
+    )
+  );
 
   return {
     rows,
     summary: {
-      qty: rows.reduce((s, r) => s + r.balanceQty, 0),
-      value: rows.reduce((s, r) => s + r.balanceValue, 0),
+      qty: rows.reduce((s,r)=>s+r.balanceQty,0),
+      value: rows.reduce((s,r)=>s+r.balanceValue,0),
       assets: rows.length,
-      locations: new Set(rows.map(r => r.location)).size,
+      locations: new Set(rows.map(r=>r.location)).size
     },
-    headers: [
-      "Kho/Công trình",
-      "Loại tài sản",
-      "Nhóm tài sản",
-      "Nguồn gốc",
-      "Mã hàng",
-      "Tên tài sản",
-      "ĐVT",
-      "Nhập lũy kế",
-      "Xuất lũy kế",
-      "Tồn đến ngày",
-      "Giá trị tồn",
-    ],
-    values: rows.map(r => [
-      r.location,
-      r.category,
-      r.group,
-      r.ownership,
-      r.code,
-      r.name,
-      r.unit,
-      r.inQty,
-      r.outQty,
-      r.balanceQty,
-      r.balanceValue,
-    ]),
-    asOfDate: wh8Date(filter.asOfDate),
-    asOfDateVN: wh8DateVN(filter.asOfDate),
+    asOfDate: cut === "9999-12-31" ? "" : cut,
+    asOfDateVN: cut === "9999-12-31" ? "" : dateVN(cut),
+    headers:["Kho/Công trình","Loại tài sản","Nhóm tài sản","Nguồn gốc","Mã hàng","Tên tài sản","ĐVT","Nhập lũy kế","Xuất lũy kế","Tồn đến ngày","Giá trị tồn"],
+    values: rows.map(r=>[r.location,r.category,r.group,r.ownership,r.code,r.name,r.unit,r.inQty,r.outQty,r.balanceQty,r.balanceValue])
   };
 }
 
-/* ============================================================
-   7. CREATE TRANSACTION
-============================================================ */
-
-function createWarehouseTransactionV8({
-  form,
-  data,
-  setData,
-  requireAdmin,
-  notify,
-  logAction,
-}) {
-  if (requireAdmin && !requireAdmin()) return false;
-
-  const assets = data.assets || [];
-  const projects = data.projects || [];
-  const warehouse = data.warehouse || [];
-
-  const asset = assets.find(a => a.id === form.assetId);
-  if (!asset) {
-    notify("Vui lòng chọn tài sản từ danh sách gợi ý.");
-    return false;
-  }
-
-  const date = wh8Date(form.date);
-  if (!date) {
-    notify("Ngày chứng từ không hợp lệ.");
-    return false;
-  }
-
-  const qty = Number(form.quantity);
-  if (!(qty > 0)) {
-    notify("Số lượng phải lớn hơn 0.");
-    return false;
-  }
-
-  const location =
-    form.locationType === "project"
-      ? projects.find(p => p.id === form.projectId)?.name || ""
-      : wh8Text(form.warehouseName);
-
-  if (!location) {
-    notify("Vui lòng chọn Kho/Công trình.");
-    return false;
-  }
-
-  const isNhap = form.type === "nhap";
-  const prefix = isNhap ? "PN" : "PX";
-  const dateKey = date.replaceAll("-", "");
-
-  const sameDay = warehouse.filter(w =>
-    String(w.voucherNo || "").startsWith(`${prefix}-${dateKey}-`)
-  );
-
-  const voucherNo =
-    wh8Text(form.voucherNo) ||
-    `${prefix}-${dateKey}-${String(sameDay.length + 1).padStart(3, "0")}`;
-
-  const duplicateVoucher = warehouse.some(
-    w => wh8Key(w.voucherNo) === wh8Key(voucherNo)
-  );
-
-  if (duplicateVoucher) {
-    notify(`Số phiếu ${voucherNo} đã tồn tại.`);
-    return false;
-  }
-
-  const unit = asset.unit || form.unit || "Cái";
-  const unitCost = Number(form.unitCost || 0) || 0;
-
-  if (!isNhap) {
-    const stock = getWarehouseStockV8({
-      warehouse,
-      assets,
-      projects,
-      assetId: asset.id,
-      locationName: location,
-      asOfDate: date,
-    });
-
-    if (qty > stock) {
-      notify(
-        `Không đủ tồn tại "${location}". ${asset.code} — ${asset.name} hiện còn ${stock} ${unit}.`
-      );
-      return false;
-    }
-  }
-
-  const tx = {
-    id: uid("wh"),
-    voucherNo,
-    assetId: asset.id,
-    type: isNhap ? "nhap" : "xuat",
-    quantity: qty,
-    date,
-    unitCost,
-    total: qty * unitCost,
-    unit,
-    receiver: wh8Text(form.receiver),
-    note: wh8Text(form.note),
-    category: asset.category || "Khác",
-    assetGroup: asset.assetGroup || "Thiết bị chính",
-    ownership: asset.ownership || "Công ty",
-    locationType: form.locationType || "project",
-    locationName: location,
-    warehouseName: form.locationType === "warehouse" ? location : "",
-    projectId: form.locationType === "project" ? form.projectId || null : null,
-    itemName: asset.name,
-    itemCode: asset.code,
-    serial: asset.serial || "",
-  };
-
-  const historyTx = {
-    id: uid("tx"),
-    warehouseTxId: tx.id,
-    assetId: asset.id,
-    type: isNhap ? "nhap_kho" : "xuat_kho",
-    date,
-    title: `${isNhap ? "Nhập kho" : "Xuất kho"} ${voucherNo}`,
-    detail: `${asset.name} · ${location} · ${tx.receiver || ""}`,
-    amount: tx.total,
-  };
-
-  setData({
-    ...data,
-    warehouse: [tx, ...warehouse],
-    transactions: [historyTx, ...(data.transactions || [])],
-    activityLog:
-      typeof logAction === "function"
-        ? logAction(
-            data.activityLog,
-            `${isNhap ? "Nhập" : "Xuất"} ${voucherNo} — ${asset.code} — ${location}`
-          )
-        : data.activityLog,
-  });
-
-  notify(`Đã lập ${isNhap ? "phiếu nhập" : "phiếu xuất"} ${voucherNo}`);
-  return true;
+function Button({children,onClick,kind="default",disabled=false}) {
+  const style = kind === "primary"
+    ? {background:BRAND,color:"#fff",borderColor:BRAND}
+    : kind === "danger"
+    ? {background:"#fff",color:DANGER,borderColor:"#F1B5AE"}
+    : {background:"#fff",color:INK,borderColor:BORDER};
+  return <button type="button" disabled={disabled} onClick={onClick}
+    style={{...style,border:"1px solid",borderRadius:8,padding:"8px 12px",fontSize:13,fontWeight:600,cursor:disabled?"not-allowed":"pointer",opacity:disabled?.55:1}}>
+    {children}
+  </button>;
 }
 
-/* ============================================================
-   8. MODAL PHIẾU NHẬP / XUẤT V8
-============================================================ */
-
-function WarehouseTxModalV8({
-  assets = [],
-  projects = [],
-  onClose,
-  onSubmit,
-  title,
-  fixedType = "nhap",
-}) {
-  const [f, setF] = React.useState({
-    assetId: "",
-    voucherNo: "",
-    quantity: 1,
-    date: wh8Date(nowIso()),
-    unit: "Cái",
-    unitCost: 0,
-    receiver: "",
-    locationType: "project",
-    warehouseName: "",
-    projectId: "",
-    note: "",
-    type: fixedType,
-  });
-
-  const asset = assets.find(a => a.id === f.assetId) || {};
-
-  const set = (key, value) =>
-    setF(prev => ({ ...prev, [key]: value }));
-
-  const selectAsset = id => {
-    const a = assets.find(x => x.id === id);
-
-    setF(prev => ({
-      ...prev,
-      assetId: id,
-      unit: a?.unit || "Cái",
-      unitCost: Number(a?.cost || 0),
-    }));
-  };
-
-  const locationName =
-    f.locationType === "project"
-      ? projects.find(p => p.id === f.projectId)?.name || ""
-      : wh8Text(f.warehouseName);
-
-  const total =
-    (Number(f.quantity) || 0) *
-    (Number(f.unitCost) || 0);
-
-  const valid =
-    !!f.assetId &&
-    !!wh8Date(f.date) &&
-    Number(f.quantity) > 0 &&
-    !!locationName;
-
-  return (
-    <Modal
-      title={title || (fixedType === "xuat" ? "Lập phiếu xuất kho" : "Lập phiếu nhập kho")}
-      onClose={onClose}
-      wide
-    >
-      <div
-        className="rounded-lg p-3 mb-4"
-        style={{
-          background: TOKENS.brandSoft,
-          border: `1px solid ${TOKENS.brand}22`,
-        }}
-      >
-        <div
-          className="text-[12px] font-semibold"
-          style={{ color: TOKENS.brand }}
-        >
-          {fixedType === "xuat" ? "PHIẾU XUẤT KHO" : "PHIẾU NHẬP KHO"}
-        </div>
-        <div
-          className="text-[11px] mt-1"
-          style={{ color: TOKENS.muted }}
-        >
-          Gõ tự do mã hoặc tên tài sản để tìm. Thông tin loại, nhóm,
-          nguồn gốc và đơn vị tính lấy từ Danh mục tài sản.
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-x-4">
-        <Field label="Số phiếu">
-          <input
-            className={inputCls}
-            style={inputStyle}
-            value={f.voucherNo}
-            onChange={e => set("voucherNo", e.target.value)}
-            placeholder={fixedType === "xuat" ? "PX-20260824-001" : "PN-20260824-001"}
-          />
-        </Field>
-
-        <Field label="Ngày tháng">
-          <input
-            type="date"
-            className={inputCls}
-            style={inputStyle}
-            value={wh8Date(f.date)}
-            onChange={e => set("date", e.target.value)}
-          />
-        </Field>
-
-        <Field label="Tên tài sản / Mã hàng">
-          <WarehouseAssetAutocompleteV8
-            assets={assets}
-            value={f.assetId}
-            onChange={selectAsset}
-          />
-        </Field>
-
-        <Field label="Mã hàng">
-          <input
-            readOnly
-            className={inputCls}
-            style={{ ...inputStyle, background: TOKENS.paper }}
-            value={asset.code || ""}
-          />
-        </Field>
-
-        <Field label="Loại tài sản">
-          <input
-            readOnly
-            className={inputCls}
-            style={{ ...inputStyle, background: TOKENS.paper }}
-            value={asset.category || ""}
-          />
-        </Field>
-
-        <Field label="Nhóm tài sản">
-          <input
-            readOnly
-            className={inputCls}
-            style={{ ...inputStyle, background: TOKENS.paper }}
-            value={asset.assetGroup || ""}
-          />
-        </Field>
-
-        <Field label="Nguồn gốc">
-          <input
-            readOnly
-            className={inputCls}
-            style={{ ...inputStyle, background: TOKENS.paper }}
-            value={asset.ownership || ""}
-          />
-        </Field>
-
-        <Field label="Đơn vị tính">
-          <input
-            readOnly
-            className={inputCls}
-            style={{ ...inputStyle, background: TOKENS.paper }}
-            value={asset.unit || "Cái"}
-          />
-        </Field>
-
-        <Field label="Loại địa điểm">
-          <select
-            className={inputCls}
-            style={inputStyle}
-            value={f.locationType}
-            onChange={e => set("locationType", e.target.value)}
-          >
-            <option value="project">Công trình</option>
-            <option value="warehouse">Kho</option>
-          </select>
-        </Field>
-
-        {f.locationType === "project" ? (
-          <Field label="Kho / Công trình">
-            <select
-              className={inputCls}
-              style={inputStyle}
-              value={f.projectId}
-              onChange={e => set("projectId", e.target.value)}
-            >
-              <option value="">-- Chọn công trình --</option>
-              {projects.map(p => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        ) : (
-          <Field label="Tên kho">
-            <input
-              className={inputCls}
-              style={inputStyle}
-              value={f.warehouseName}
-              onChange={e => set("warehouseName", e.target.value)}
-              placeholder="Kho trung tâm"
-            />
-          </Field>
-        )}
-
-        <Field label="Người giao / nhận">
-          <input
-            className={inputCls}
-            style={inputStyle}
-            value={f.receiver}
-            onChange={e => set("receiver", e.target.value)}
-          />
-        </Field>
-
-        <Field label="Số lượng">
-          <input
-            type="number"
-            min="0"
-            step="any"
-            className={inputCls}
-            style={inputStyle}
-            value={f.quantity}
-            onChange={e => set("quantity", e.target.value)}
-          />
-        </Field>
-
-        <Field label="Đơn giá">
-          <input
-            type="number"
-            min="0"
-            step="any"
-            className={inputCls}
-            style={inputStyle}
-            value={f.unitCost}
-            onChange={e => set("unitCost", e.target.value)}
-          />
-        </Field>
-
-        <Field label="Thành tiền">
-          <input
-            readOnly
-            className={inputCls}
-            style={{ ...inputStyle, background: TOKENS.paper }}
-            value={typeof fmtVND === "function" ? fmtVND(total) : total.toLocaleString("vi-VN")}
-          />
-        </Field>
-
-        <div className="col-span-2">
-          <Field label="Ghi chú">
-            <textarea
-              className={inputCls}
-              style={inputStyle}
-              rows={3}
-              value={f.note}
-              onChange={e => set("note", e.target.value)}
-            />
-          </Field>
-        </div>
-      </div>
-
-      <div className="flex justify-end gap-2 mt-4">
-        <Btn onClick={onClose}>Hủy</Btn>
-        <Btn
-          kind="primary"
-          disabled={!valid}
-          onClick={() =>
-            onSubmit?.({
-              ...f,
-              type: fixedType,
-              date: wh8Date(f.date),
-              unit: asset.unit || "Cái",
-              category: asset.category || "",
-              assetGroup: asset.assetGroup || "",
-              ownership: asset.ownership || "",
-            })
-          }
-        >
-          Lưu phiếu
-        </Btn>
-      </div>
-    </Modal>
-  );
+function Input({value,onChange,placeholder,type="text"}) {
+  return <input type={type} value={value ?? ""} onChange={e=>onChange(e.target.value)}
+    placeholder={placeholder} style={{width:"100%",boxSizing:"border-box",border:`1px solid ${BORDER}`,borderRadius:8,padding:"9px 10px",fontSize:13,outline:"none",background:"#fff"}} />;
 }
 
-/* ============================================================
-   9. BULK DELETE — XÓA PHIẾU NHẬP / XUẤT
-============================================================ */
-
-function deleteWarehouseTransactionsV8({
-  ids = [],
-  data,
-  setData,
-  requireAdmin,
-  notify,
-  logAction,
-}) {
-  if (requireAdmin && !requireAdmin()) return false;
-
-  const selected = new Set(ids.filter(Boolean));
-  if (!selected.size) {
-    notify("Chưa chọn phiếu cần xóa.");
-    return false;
-  }
-
-  const warehouse = data.warehouse || [];
-  const rows = warehouse.filter(w => selected.has(w.id));
-
-  if (!rows.length) {
-    notify("Không tìm thấy các phiếu đã chọn.");
-    return false;
-  }
-
-  const voucherNos = new Set(rows.map(w => wh8Key(w.voucherNo)).filter(Boolean));
-  const warehouseIds = new Set(rows.map(w => w.id));
-
-  const confirmed = window.confirm(
-    `Bạn có chắc muốn xóa ${rows.length} dòng giao dịch thuộc ${voucherNos.size} số phiếu?\n\n` +
-    [...voucherNos].join(", ") +
-    `\n\nThao tác này sẽ làm thay đổi báo cáo nhập - xuất - tồn.`
-  );
-
-  if (!confirmed) return false;
-
-  const remainingWarehouse = warehouse.filter(w => !selected.has(w.id));
-
-  const remainingTransactions = (data.transactions || []).filter(t => {
-    if (t.warehouseTxId && warehouseIds.has(t.warehouseTxId)) return false;
-
-    const title = wh8Key(t.title);
-    const matchesVoucher = [...voucherNos].some(v => v && title.includes(v));
-    return !matchesVoucher;
-  });
-
-  setData({
-    ...data,
-    warehouse: remainingWarehouse,
-    transactions: remainingTransactions,
-    activityLog:
-      typeof logAction === "function"
-        ? logAction(
-            data.activityLog,
-            `Xóa ${rows.length} dòng phiếu kho (${[...voucherNos].join(", ")})`
-          )
-        : data.activityLog,
-  });
-
-  notify(`Đã xóa ${rows.length} dòng giao dịch kho.`);
-  return true;
+function Field({label,children}) {
+  return <label style={{display:"block",marginBottom:12}}>
+    <div style={{fontSize:12,color:MUTED,fontWeight:600,marginBottom:5}}>{label}</div>{children}
+  </label>;
 }
 
-function deleteWarehouseVouchersV8({
-  voucherNos = [],
-  data,
-  setData,
-  requireAdmin,
-  notify,
-  logAction,
-}) {
-  if (requireAdmin && !requireAdmin()) return false;
+function SearchAsset({assets,value,onChange}) {
+  const selected = assets.find(a=>a.id===value);
+  const [q,setQ] = useState(selected ? `${selected.code||""} — ${selected.name||""}` : "");
+  const [open,setOpen] = useState(false);
+  useEffect(()=>{ if(selected) setQ(`${selected.code||""} — ${selected.name||""}`); else if(!value) setQ(""); },[value,selected?.id]);
 
-  const keys = new Set(voucherNos.map(wh8Key).filter(Boolean));
-  if (!keys.size) {
-    notify("Chưa chọn số phiếu cần xóa.");
-    return false;
-  }
+  const results = useMemo(()=>{
+    const s=searchText(q);
+    if(!s) return assets.slice(0,25);
+    return assets.map(a=>{
+      const code=searchText(a.code), name=searchText(a.name), serial=searchText(a.serial);
+      let score=0;
+      if(code===s) score+=1000; if(name===s) score+=900;
+      if(code.startsWith(s)) score+=500; if(name.startsWith(s)) score+=450;
+      if(code.includes(s)) score+=80; if(name.includes(s)) score+=70; if(serial.includes(s)) score+=40;
+      return {a,score};
+    }).filter(x=>x.score).sort((a,b)=>b.score-a.score).slice(0,25).map(x=>x.a);
+  },[assets,q]);
 
-  const warehouse = data.warehouse || [];
-  const rows = warehouse.filter(w => keys.has(wh8Key(w.voucherNo)));
-
-  if (!rows.length) {
-    notify("Không tìm thấy phiếu cần xóa.");
-    return false;
-  }
-
-  const ok = window.confirm(
-    `Xóa ${keys.size} phiếu (${rows.length} dòng giao dịch)?\n\n` +
-    `Các phiếu: ${voucherNos.join(", ")}`
-  );
-
-  if (!ok) return false;
-
-  const rowIds = new Set(rows.map(w => w.id));
-
-  setData({
-    ...data,
-    warehouse: warehouse.filter(w => !keys.has(wh8Key(w.voucherNo))),
-    transactions: (data.transactions || []).filter(t => {
-      if (t.warehouseTxId && rowIds.has(t.warehouseTxId)) return false;
-      const title = wh8Key(t.title);
-      return ![...keys].some(k => k && title.includes(k));
-    }),
-    activityLog:
-      typeof logAction === "function"
-        ? logAction(
-            data.activityLog,
-            `Xóa hàng loạt ${keys.size} phiếu kho`
-          )
-        : data.activityLog,
-  });
-
-  notify(`Đã xóa ${keys.size} phiếu kho.`);
-  return true;
+  return <div style={{position:"relative"}}>
+    <Input value={q} onChange={v=>{setQ(v);setOpen(true);if(!v.trim())onChange("");}} placeholder="Gõ tên hoặc mã tài sản..." />
+    {open && <div style={{position:"absolute",zIndex:1000,left:0,right:0,top:"100%",marginTop:3,maxHeight:260,overflow:"auto",background:"#fff",border:`1px solid ${BORDER}`,borderRadius:8,boxShadow:"0 12px 30px rgba(0,0,0,.12)"}}>
+      {results.length ? results.map(a=><button key={a.id} type="button" onMouseDown={e=>e.preventDefault()} onClick={()=>{onChange(a.id);setQ(`${a.code||""} — ${a.name||""}`);setOpen(false);}}
+        style={{display:"block",width:"100%",textAlign:"left",border:0,background:"#fff",padding:"9px 11px",cursor:"pointer"}}>
+        <div style={{fontWeight:600,fontSize:13,color:INK}}>{a.code||"—"} — {a.name||"—"}</div>
+        <div style={{fontSize:11,color:MUTED,marginTop:2}}>{a.category||"Chưa phân loại"} · {a.assetGroup||"Chưa có nhóm"} · {a.ownership||"Chưa có nguồn gốc"}</div>
+      </button>) : <div style={{padding:12,fontSize:12,color:MUTED}}>Không tìm thấy theo mã hoặc tên.</div>}
+    </div>}
+  </div>;
 }
 
-/* ============================================================
-   10. TABLE PHIẾU + SEARCH + BULK SELECT
-============================================================ */
-
-function WarehouseTransactionTableV8({
-  warehouse = [],
-  assets = [],
-  projects = [],
-  type = "",
-  requireAdmin,
-  onDeleteSelected,
-}) {
-  const [query, setQuery] = React.useState("");
-  const [locationFilter, setLocationFilter] = React.useState("");
-  const [selectedIds, setSelectedIds] = React.useState([]);
-
-  const filtered = React.useMemo(() => {
-    const q = wh8Key(query);
-
-    return warehouse
-      .filter(w => {
-        if (type && !(
-          (type === "nhap" && wh8IsNhap(w)) ||
-          (type === "xuat" && wh8IsXuat(w))
-        )) return false;
-
-        if (locationFilter && wh8Key(wh8Location(w, projects)) !== wh8Key(locationFilter)) {
-          return false;
-        }
-
-        if (!q) return true;
-
-        const asset = resolveExistingWarehouseAssetV8(w, assets);
-
-        const haystack = [
-          w.voucherNo,
-          w.itemCode,
-          w.itemName,
-          asset?.code,
-          asset?.name,
-          wh8Location(w, projects),
-          w.receiver,
-        ].map(wh8SearchText).join(" ");
-
-        return haystack.includes(q);
-      })
-      .sort((a, b) => {
-        const da = wh8Date(a.date);
-        const db = wh8Date(b.date);
-        return db.localeCompare(da) || String(b.id).localeCompare(String(a.id));
-      });
-  }, [warehouse, assets, projects, type, query, locationFilter]);
-
-  const filteredIds = filtered.map(w => w.id);
-  const allFilteredSelected =
-    filteredIds.length > 0 &&
-    filteredIds.every(id => selectedIds.includes(id));
-
-  const toggleAll = () => {
-    if (allFilteredSelected) {
-      setSelectedIds(prev => prev.filter(id => !filteredIds.includes(id)));
-    } else {
-      setSelectedIds(prev => Array.from(new Set([...prev, ...filteredIds])));
-    }
-  };
-
-  const toggleOne = id => {
-    setSelectedIds(prev =>
-      prev.includes(id)
-        ? prev.filter(x => x !== id)
-        : [...prev, id]
-    );
-  };
-
-  const locations = Array.from(
-    new Set(warehouse.map(w => wh8Location(w, projects)))
-  ).sort((a, b) => wh8Key(a).localeCompare(wh8Key(b), "vi"));
-
-  const doDelete = () => {
-    if (!selectedIds.length) return;
-    onDeleteSelected?.(selectedIds);
-    setSelectedIds([]);
-  };
-
-  return (
-    <div>
-      <div className="flex flex-wrap gap-2 items-center mb-3">
-        <div className="flex-1 min-w-[260px]">
-          <input
-            className={inputCls}
-            style={inputStyle}
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Tìm số phiếu, mã hàng, tên tài sản, công trình..."
-          />
-        </div>
-
-        <select
-          className={inputCls}
-          style={{ ...inputStyle, width: 220 }}
-          value={locationFilter}
-          onChange={e => setLocationFilter(e.target.value)}
-        >
-          <option value="">Tất cả Kho/Công trình</option>
-          {locations.map(x => (
-            <option key={x} value={x}>{x}</option>
-          ))}
-        </select>
-
-        <Btn
-          kind="danger"
-          disabled={!selectedIds.length}
-          onClick={doDelete}
-        >
-          Xóa {selectedIds.length ? `(${selectedIds.length})` : ""} phiếu
-        </Btn>
+function Modal({title,onClose,children}) {
+  return <div style={{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,.35)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+    <div style={{width:"min(920px,100%)",maxHeight:"90vh",overflow:"auto",background:"#fff",borderRadius:12,boxShadow:"0 20px 60px rgba(0,0,0,.2)"}}>
+      <div style={{padding:"16px 18px",borderBottom:`1px solid ${BORDER}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <strong style={{fontSize:17}}>{title}</strong><button type="button" onClick={onClose} style={{border:0,background:"transparent",fontSize:22,cursor:"pointer"}}>×</button>
       </div>
-
-      <div
-        className="overflow-auto rounded-lg"
-        style={{
-          background: TOKENS.surface,
-          border: `1px solid ${TOKENS.border}`,
-        }}
-      >
-        <table className="w-full min-w-[1150px]">
-          <thead>
-            <tr>
-              <Th>
-                <input
-                  type="checkbox"
-                  checked={allFilteredSelected}
-                  onChange={toggleAll}
-                  aria-label="Chọn tất cả kết quả"
-                />
-              </Th>
-              <Th>Số phiếu</Th>
-              <Th>Ngày</Th>
-              <Th>Mã hàng</Th>
-              <Th>Tên tài sản</Th>
-              <Th>Kho/Công trình</Th>
-              <Th>Loại</Th>
-              <Th right>Số lượng</Th>
-              <Th>ĐVT</Th>
-              <Th>Người giao/nhận</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map(w => {
-              const asset = resolveExistingWarehouseAssetV8(w, assets);
-              const checked = selectedIds.includes(w.id);
-
-              return (
-                <tr key={w.id} className="aa-row">
-                  <Td>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleOne(w.id)}
-                    />
-                  </Td>
-                  <Td mono>
-                    <Tag>{w.voucherNo || "—"}</Tag>
-                  </Td>
-                  <Td>{wh8DateVN(w.date)}</Td>
-                  <Td mono>{asset?.code || w.itemCode || "—"}</Td>
-                  <Td>{asset?.name || w.itemName || "—"}</Td>
-                  <Td>{wh8Location(w, projects)}</Td>
-                  <Td>
-                    {wh8IsNhap(w) ? "Nhập kho" : "Xuất kho"}
-                  </Td>
-                  <Td right mono>
-                    {Number(w.quantity || 0).toLocaleString("vi-VN")}
-                  </Td>
-                  <Td>{w.unit || asset?.unit || "Cái"}</Td>
-                  <Td>{w.receiver || "—"}</Td>
-                </tr>
-              );
-            })}
-
-            {!filtered.length && (
-              <tr>
-                <td colSpan={10} className="py-12 text-center">
-                  <EmptyState text="Không có phiếu phù hợp điều kiện lọc." />
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div
-        className="text-[12px] mt-2"
-        style={{ color: TOKENS.muted }}
-      >
-        Đang hiển thị {filtered.length} dòng · Đã chọn {selectedIds.length} dòng.
-        Tích ô đầu bảng để chọn toàn bộ kết quả đang lọc.
-      </div>
+      <div style={{padding:18}}>{children}</div>
     </div>
-  );
+  </div>;
 }
 
-/* ============================================================
-   11. IMPORT DANH MỤC — KHÔNG TẠO PHIẾU
-============================================================ */
-
-function importAssetCatalogV8({
-  file,
-  data,
-  setData,
-  requireAdmin,
-  notify,
-  logAction,
-}) {
-  if (requireAdmin && !requireAdmin()) return;
-
-  const reader = new FileReader();
-
-  reader.onload = e => {
-    try {
-      const wb = XLSX.read(e.target.result, {
-        type: "array",
-        cellDates: true,
-      });
-
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
-
-      if (!rows.length) {
-        notify("File danh mục không có dữ liệu.");
-        return;
-      }
-
-      const existing = data.assets || [];
-      const existingByCode = Object.fromEntries(
-        existing.map(a => [wh8Key(a.code), a])
-      );
-
-      const imported = [];
-      const errors = [];
-      const seen = new Set();
-
-      rows.forEach((r, i) => {
-        const rowNo = i + 2;
-
-        const code = wh8Text(
-          r["Mã quản lý"] ||
-          r["Mã hàng"] ||
-          r["Mã tài sản"] ||
-          r.code
-        );
-
-        const name = wh8Text(
-          r["Tên tài sản"] ||
-          r["Tên hàng"] ||
-          r["Tên thiết bị"] ||
-          r.name
-        );
-
-        if (!code || !name) {
-          errors.push(`Dòng ${rowNo}: thiếu Mã quản lý hoặc Tên tài sản.`);
-          return;
-        }
-
-        const key = wh8Key(code);
-
-        if (seen.has(key)) {
-          errors.push(`Dòng ${rowNo}: mã ${code} bị trùng trong file.`);
-          return;
-        }
-
-        seen.add(key);
-        const old = existingByCode[key];
-
-        imported.push({
-          ...old,
-          id: old?.id || uid("as"),
-          code,
-          name,
-          category: wh8Text(r["Loại tài sản"] || r["Loại"] || old?.category || ""),
-          assetGroup: wh8Text(r["Nhóm tài sản"] || r["Nhóm"] || old?.assetGroup || ""),
-          ownership: wh8Text(r["Nguồn gốc"] || old?.ownership || "Công ty"),
-          unit: wh8Text(r["Đơn vị tính"] || r["ĐVT"] || old?.unit || "Cái"),
-          serial: wh8Text(r["Serial"] || r["Số serial"] || old?.serial || ""),
-          cost: Number(r["Đơn giá"] || r["Nguyên giá"] || old?.cost || 0) || 0,
-          usefulLifeMonths: Number(
-            r["Thời gian sử dụng"] || old?.usefulLifeMonths || 36
-          ) || 36,
-        });
-      });
-
-      if (!imported.length) {
-        notify(errors[0] || "Không có dòng danh mục hợp lệ.");
-        return;
-      }
-
-      const importedCodes = new Set(imported.map(a => wh8Key(a.code)));
-      const remaining = existing.filter(
-        a => !importedCodes.has(wh8Key(a.code))
-      );
-
-      setData({
-        ...data,
-        assets: [...imported, ...remaining],
-        warehouse: Array.isArray(data.warehouse) ? data.warehouse : [],
-        transactions: Array.isArray(data.transactions) ? data.transactions : [],
-        activityLog:
-          typeof logAction === "function"
-            ? logAction(
-                data.activityLog,
-                `Import/cập nhật ${imported.length} danh mục tài sản — KHÔNG tạo phiếu kho`
-              )
-            : data.activityLog,
-      });
-
-      notify(
-        errors.length
-          ? `Đã cập nhật ${imported.length} danh mục; ${errors.length} dòng lỗi. ${errors[0]}`
-          : `Đã cập nhật ${imported.length} danh mục tài sản. Không tạo phiếu kho.`
-      );
-    } catch (err) {
-      console.error(err);
-      notify("Không đọc được file Excel danh mục tài sản.");
-    }
-  };
-
-  reader.readAsArrayBuffer(file);
-}
-
-/* ============================================================
-   12. IMPORT PHIẾU KHO
-============================================================ */
-
-function importWarehouseExcelV8({
-  file,
-  data,
-  setData,
-  requireAdmin,
-  notify,
-  logAction,
-}) {
-  if (requireAdmin && !requireAdmin()) return;
-
-  const reader = new FileReader();
-
-  reader.onload = e => {
-    try {
-      const wb = XLSX.read(e.target.result, {
-        type: "array",
-        cellDates: true,
-      });
-
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
-
-      if (!rows.length) {
-        notify("File Excel phiếu kho không có dữ liệu.");
-        return;
-      }
-
-      const assets = data.assets || [];
-      const projects = data.projects || [];
-      const existing = data.warehouse || [];
-
-      const imported = [];
-      const errors = [];
-
-      rows.forEach((r, i) => {
-        const rowNo = i + 2;
-
-        const rawType = wh8Key(
-          r["Loại phiếu"] ||
-          r["Loại chứng từ"] ||
-          "Nhập kho"
-        );
-
-        const type = rawType.includes("xuat") ? "xuat" : "nhap";
-
-        const date = wh8Date(
-          r["Ngày tháng"] ||
-          r["Ngày chứng từ"] ||
-          r["Ngày"]
-        );
-
-        if (!date) {
-          errors.push(`Dòng ${rowNo}: ngày không hợp lệ.`);
-          return;
-        }
-
-        const resolved = resolveWarehouseAssetV8({
-          row: r,
-          assets,
-        });
-
-        if (resolved.error) {
-          errors.push(`Dòng ${rowNo}: ${resolved.error}`);
-          return;
-        }
-
-        const asset = resolved.asset;
-
-        const qty = Number(
-          r["Số lượng"] ??
-          r["SL"] ??
-          0
-        );
-
-        if (!(qty > 0)) {
-          errors.push(`Dòng ${rowNo}: số lượng phải lớn hơn 0.`);
-          return;
-        }
-
-        const locationText = wh8Text(
-          r["Kho/Công trình"] ||
-          r["Công trình"] ||
-          r["Tên kho"] ||
-          r["Kho"]
-        );
-
-        if (!locationText) {
-          errors.push(`Dòng ${rowNo}: thiếu Kho/Công trình.`);
-          return;
-        }
-
-        const project = wh8ProjectByName(projects, locationText);
-        const rawLocationType = wh8Key(
-          r["Loại địa điểm"] ||
-          r["Loại nơi"] ||
-          ""
-        );
-
-        const locationType =
-          rawLocationType.includes("cong trinh")
-            ? "project"
-            : rawLocationType.includes("kho")
-              ? "warehouse"
-              : project
-                ? "project"
-                : "warehouse";
-
-        const unitCost = Number(
-          r["Đơn giá"] ??
-          r["Đơn giá nhập"] ??
-          r["Đơn giá xuất"] ??
-          0
-        ) || 0;
-
-        const prefix = type === "nhap" ? "PN" : "PX";
-        const dateKey = date.replaceAll("-", "");
-
-        const seq =
-          [...existing, ...imported].filter(w =>
-            String(w.voucherNo || "").startsWith(`${prefix}-${dateKey}-`)
-          ).length + 1;
-
-        const voucherNo =
-          wh8Text(r["Số phiếu"]) ||
-          `${prefix}-${dateKey}-${String(seq).padStart(3, "0")}`;
-
-        const unit =
-          wh8Text(r["Đơn vị tính"] || r["ĐVT"]) ||
-          asset.unit ||
-          "Cái";
-
-        imported.push({
-          id: uid("wh"),
-          voucherNo,
-          assetId: asset.id,
-          type,
-          quantity: qty,
-          date,
-          unitCost,
-          total: qty * unitCost,
-          unit,
-          receiver: wh8Text(r["Người giao/nhận"]),
-          note: wh8Text(r["Ghi chú"]),
-          category: asset.category || "Khác",
-          assetGroup: asset.assetGroup || "Thiết bị chính",
-          ownership: asset.ownership || "Công ty",
-          locationType,
-          locationName: locationText,
-          warehouseName: locationType === "warehouse" ? locationText : "",
-          projectId: locationType === "project" ? project?.id || null : null,
-          itemName: asset.name,
-          itemCode: asset.code,
-          serial: asset.serial || "",
-        });
-      });
-
-      const existingVoucherKeys = new Set(
-        existing.map(w => wh8Key(w.voucherNo))
-      );
-
-      imported.forEach(tx => {
-        if (existingVoucherKeys.has(wh8Key(tx.voucherNo))) {
-          errors.push(
-            `Số phiếu ${tx.voucherNo} đã tồn tại. Không import trùng phiếu.`
-          );
-        }
-      });
-
-      /*
-        Kiểm tra xuất:
-        - theo đúng tài sản
-        - đúng Kho/Công trình
-        - đúng ngày
-        - tính cả các dòng import trước đó
-      */
-      for (const tx of imported) {
-        if (!wh8IsXuat(tx)) continue;
-
-        const rowsAtLocation = [
-          ...existing,
-          ...imported,
-        ].filter(w => {
-          const a = resolveExistingWarehouseAssetV8(w, assets);
-          return (
-            a?.id === tx.assetId &&
-            wh8Key(wh8Location(w, projects)) === wh8Key(tx.locationName) &&
-            wh8Date(w.date) <= tx.date
-          );
-        });
-
-        const available = rowsAtLocation.reduce((sum, w) => {
-          if (wh8IsNhap(w)) return sum + (Number(w.quantity) || 0);
-          if (wh8IsXuat(w)) return sum - (Number(w.quantity) || 0);
-          return sum;
-        }, 0);
-
-        if (tx.quantity > available) {
-          errors.push(
-            `${tx.voucherNo}: xuất ${tx.quantity} ${tx.unit} tại "${tx.locationName}" vượt tồn ${available}.`
-          );
-        }
-      }
-
-      if (errors.length) {
-        notify(`Import bị dừng: ${errors.length} lỗi. ${errors[0]}`);
-        return;
-      }
-
-      const history = imported.map(tx => ({
-        id: uid("tx"),
-        warehouseTxId: tx.id,
-        assetId: tx.assetId,
-        type: tx.type === "nhap" ? "nhap_kho" : "xuat_kho",
-        date: tx.date,
-        title: `${tx.type === "nhap" ? "Nhập kho" : "Xuất kho"} ${tx.voucherNo}`,
-        detail: `${tx.itemName} · ${tx.locationName} · ${tx.receiver || ""}`,
-        amount: tx.total,
-      }));
-
-      setData({
-        ...data,
-        warehouse: [...imported, ...existing],
-        transactions: [...history, ...(data.transactions || [])],
-        activityLog:
-          typeof logAction === "function"
-            ? logAction(
-                data.activityLog,
-                `Import ${imported.length} phiếu nhập/xuất kho`
-              )
-            : data.activityLog,
-      });
-
-      notify(`Đã import ${imported.length} phiếu kho.`);
-    } catch (err) {
-      console.error(err);
-      notify("Không đọc được file Excel phiếu nhập/xuất kho.");
-    }
-  };
-
-  reader.readAsArrayBuffer(file);
-}
-
-/* ============================================================
-   13. TEMPLATE EXCEL
-============================================================ */
-
-function downloadWarehouseTemplateV8({
-  projects = [],
-  downloadExcelTemplate,
-}) {
-  const headers = [
-    "Loại phiếu",
-    "Số phiếu",
-    "Ngày tháng",
-    "Tên tài sản",
-    "Mã hàng",
-    "Kho/Công trình",
-    "Loại địa điểm",
-    "Loại tài sản",
-    "Nhóm tài sản",
-    "Nguồn gốc",
-    "Người giao/nhận",
-    "Số lượng",
-    "Đơn vị tính",
-    "Đơn giá",
-    "Thành tiền",
-    "Ghi chú",
-  ];
-
-  const p = projects[0]?.name || "Kho trung tâm";
-
-  const rows = [[
-    "Nhập kho",
-    "PN-20260824-001",
-    "2026-08-24",
-    "Máy xúc 01",
-    "MX-01",
-    p,
-    projects.length ? "Công trình" : "Kho",
-    "Máy xúc",
-    "Thiết bị chính",
-    "Thuê",
-    "Nguyễn Văn A",
-    1,
-    "Cái",
-    0,
-    0,
-    "",
-  ]];
-
-  if (typeof downloadExcelTemplate === "function") {
-    downloadExcelTemplate(
-      "Mau_Import_Phieu_Nhap_Xuat_Kho_V8",
-      headers,
-      rows
-    );
-    return;
+export function createWarehouseTransactionV9({form,data,requireAdmin,notify,setData}) {
+  if (requireAdmin && !requireAdmin()) return false;
+  const assets=data.assets||[], projects=data.projects||[], warehouse=data.warehouse||[];
+  const asset=assets.find(a=>a.id===form.assetId);
+  if(!asset){notify?.("Vui lòng chọn tài sản từ danh sách.");return false;}
+  const d=dateKey(form.date); if(!d){notify?.("Ngày chứng từ không hợp lệ.");return false;}
+  const qty=Number(form.quantity); if(!(qty>0)){notify?.("Số lượng phải lớn hơn 0.");return false;}
+  const loc=form.locationType==="project" ? projects.find(p=>p.id===form.projectId)?.name||"" : text(form.warehouseName);
+  if(!loc){notify?.("Vui lòng chọn Kho/Công trình.");return false;}
+  const out=form.type==="xuat";
+  const prefix=out?"PX":"PN", dk=d.replaceAll("-","");
+  const voucher=text(form.voucherNo)||`${prefix}-${dk}-${String(warehouse.filter(w=>String(w.voucherNo||"").startsWith(`${prefix}-${dk}-`)).length+1).padStart(3,"0")}`;
+  if(warehouse.some(w=>searchText(w.voucherNo)===searchText(voucher))){notify?.(`Số phiếu ${voucher} đã tồn tại.`);return false;}
+  const unit=asset.unit||"Cái", unitCost=Number(form.unitCost)||0;
+  if(out){
+    const stock=getWarehouseStockV9({warehouse,assets,projects,assetId:asset.id,locationName:loc,asOfDate:d});
+    if(qty>stock){notify?.(`Không đủ tồn tại "${loc}". ${asset.code} — ${asset.name} hiện còn ${stock} ${unit}.`);return false;}
   }
-
-  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Phiếu kho");
-  XLSX.writeFile(wb, "Mau_Import_Phieu_Nhap_Xuat_Kho_V8.xlsx");
+  const tx={id:uid("wh"),voucherNo:voucher,assetId:asset.id,type:out?"xuat":"nhap",quantity:qty,date:d,unitCost,total:qty*unitCost,unit,
+    receiver:text(form.receiver),note:text(form.note),category:asset.category||"Khác",assetGroup:asset.assetGroup||"Thiết bị chính",
+    ownership:asset.ownership||"Công ty",locationType:form.locationType||"project",locationName:loc,
+    warehouseName:form.locationType==="warehouse"?loc:"",projectId:form.locationType==="project"?form.projectId||null:null,
+    itemName:asset.name,itemCode:asset.code,serial:asset.serial||""};
+  const history={id:uid("tx"),warehouseTxId:tx.id,assetId:asset.id,type:out?"xuat_kho":"nhap_kho",date:d,title:`${out?"Xuất kho":"Nhập kho"} ${voucher}`,
+    detail:`${asset.name} · ${loc} · ${tx.receiver||""}`,amount:tx.total};
+  setData({...data,warehouse:[tx,...warehouse],transactions:[history,...(data.transactions||[])]});
+  notify?.(`Đã lập ${out?"phiếu xuất":"phiếu nhập"} ${voucher}`);
+  return true;
 }
 
-/* ============================================================
-   14. AUDIT DATA
-============================================================ */
-
-function auditWarehouseDataV8({
-  warehouse = [],
-  assets = [],
-  projects = [],
-}) {
-  const orphanTransactions = [];
-  const invalidDates = [];
-  const invalidLocations = [];
-
-  warehouse.forEach(tx => {
-    if (!resolveExistingWarehouseAssetV8(tx, assets)) {
-      orphanTransactions.push({
-        id: tx.id,
-        voucherNo: tx.voucherNo,
-        itemCode: tx.itemCode,
-        itemName: tx.itemName,
-      });
-    }
-
-    if (!wh8Date(tx.date)) {
-      invalidDates.push({
-        id: tx.id,
-        voucherNo: tx.voucherNo,
-        date: tx.date,
-      });
-    }
-
-    if (!wh8Location(tx, projects)) {
-      invalidLocations.push(tx.voucherNo);
-    }
+export function deleteWarehouseTransactionsV9({ids=[],data,requireAdmin,notify,setData}) {
+  if(requireAdmin && !requireAdmin()) return false;
+  const selected=new Set(ids.filter(Boolean)), warehouse=data.warehouse||[];
+  const rows=warehouse.filter(w=>selected.has(w.id));
+  if(!rows.length){notify?.("Chưa chọn phiếu cần xóa.");return false;}
+  const vouchers=[...new Set(rows.map(w=>text(w.voucherNo)).filter(Boolean))];
+  if(!window.confirm(`Xóa ${rows.length} dòng thuộc ${vouchers.length} số phiếu?\n\n${vouchers.join(", ")}\n\nThao tác này sẽ thay đổi báo cáo nhập - xuất - tồn.`)) return false;
+  const idsSet=new Set(rows.map(w=>w.id)), voucherKeys=new Set(vouchers.map(searchText));
+  setData({...data,
+    warehouse:warehouse.filter(w=>!selected.has(w.id)),
+    transactions:(data.transactions||[]).filter(t=>!(t.warehouseTxId&&idsSet.has(t.warehouseTxId)) && ![...voucherKeys].some(k=>k&&searchText(t.title).includes(k)))
   });
-
-  const balances = buildWarehouseBalancesV8({
-    warehouse,
-    assets,
-    projects,
-    asOfDate: "9999-12-31",
-  });
-
-  return {
-    totalAssets: assets.length,
-    totalWarehouseTransactions: warehouse.length,
-    orphanTransactions,
-    invalidDates,
-    invalidLocations,
-    negativeLocations: balances
-      .filter(r => r.balanceQty < 0)
-      .map(r => ({
-        code: r.code,
-        name: r.name,
-        location: r.location,
-        balanceQty: r.balanceQty,
-      })),
-  };
+  notify?.(`Đã xóa ${vouchers.length} phiếu kho.`);
+  return true;
 }
 
-/* ============================================================
-   15. INTEGRATION EXAMPLE
-============================================================ */
+function TxModal({assets,projects,data,onClose,onSaved,type,requireAdmin,notify,setData}) {
+  const [f,setF]=useState({assetId:"",voucherNo:"",date:new Date().toLocaleDateString("en-CA"),quantity:1,unitCost:0,receiver:"",locationType:"project",projectId:"",warehouseName:"",note:"",type});
+  const a=assets.find(x=>x.id===f.assetId)||{};
+  const set=(k,v)=>setF(p=>({...p,[k]:v}));
+  const total=(Number(f.quantity)||0)*(Number(f.unitCost)||0);
+  return <Modal title={type==="nhap"?"Lập phiếu nhập kho":"Lập phiếu xuất kho"} onClose={onClose}>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+      <Field label="Số phiếu"><Input value={f.voucherNo} onChange={v=>set("voucherNo",v)} placeholder={type==="nhap"?"PN-20260824-001":"PX-20260824-001"} /></Field>
+      <Field label="Ngày tháng"><Input type="date" value={f.date} onChange={v=>set("date",v)} /></Field>
+      <Field label="Tên tài sản / Mã hàng"><SearchAsset assets={assets} value={f.assetId} onChange={id=>{const x=assets.find(z=>z.id===id)||{};setF(p=>({...p,assetId:id,unitCost:Number(x.cost)||0}));}} /></Field>
+      <Field label="Mã hàng tự động"><Input value={a.code||""} onChange={()=>{}} /></Field>
+      <Field label="Loại tài sản"><Input value={a.category||""} onChange={()=>{}} /></Field>
+      <Field label="Nhóm tài sản"><Input value={a.assetGroup||""} onChange={()=>{}} /></Field>
+      <Field label="Nguồn gốc"><Input value={a.ownership||""} onChange={()=>{}} /></Field>
+      <Field label="Đơn vị tính"><Input value={a.unit||"Cái"} onChange={()=>{}} /></Field>
+      <Field label="Kho / Công trình">
+        <select value={f.locationType==="project"?f.projectId:"__warehouse__"} onChange={e=>e.target.value==="__warehouse__"?setF(p=>({...p,locationType:"warehouse",projectId:""})):setF(p=>({...p,locationType:"project",projectId:e.target.value}))}
+          style={{width:"100%",border:`1px solid ${BORDER}`,borderRadius:8,padding:9,fontSize:13}}>
+          <option value="">-- Chọn công trình --</option>
+          {projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+          <option value="__warehouse__">Kho trung tâm / kho khác</option>
+        </select>
+      </Field>
+      {f.locationType==="warehouse" && <Field label="Tên kho"><Input value={f.warehouseName} onChange={v=>set("warehouseName",v)} placeholder="Kho trung tâm" /></Field>}
+      <Field label="Người giao / nhận"><Input value={f.receiver} onChange={v=>set("receiver",v)} /></Field>
+      <Field label="Số lượng"><Input type="number" value={f.quantity} onChange={v=>set("quantity",v)} /></Field>
+      <Field label="Đơn giá"><Input type="number" value={f.unitCost} onChange={v=>set("unitCost",v)} /></Field>
+      <Field label="Thành tiền"><Input value={total.toLocaleString("vi-VN")} onChange={()=>{}} /></Field>
+      <div style={{gridColumn:"1 / -1"}}><Field label="Ghi chú"><textarea value={f.note} onChange={e=>set("note",e.target.value)} rows={3} style={{width:"100%",boxSizing:"border-box",border:`1px solid ${BORDER}`,borderRadius:8,padding:9}} /></Field></div>
+    </div>
+    <div style={{display:"flex",justifyContent:"flex-end",gap:8}}><Button onClick={onClose}>Hủy</Button>
+      <Button kind="primary" disabled={!f.assetId||Number(f.quantity)<=0||(!f.projectId&&f.locationType==="project")||(!f.warehouseName&&f.locationType==="warehouse")}
+        onClick={()=>{const ok=createWarehouseTransactionV9({form:f,data,setData,requireAdmin,notify});if(ok){onSaved?.();}}}>Lưu phiếu</Button>
+    </div>
+  </Modal>;
+}
 
-/*
-  PHIẾU NHẬP:
+function TxTable({warehouse,assets,projects,data,type,requireAdmin,notify,setData}) {
+  const [q,setQ]=useState(""),[loc,setLoc]=useState(""),[selected,setSelected]=useState([]);
+  const rows=useMemo(()=>{
+    const s=searchText(q);
+    return warehouse.filter(w=>(!type||(type==="nhap"?isIn(w):isOut(w)))&&(!loc||searchText(locationOf(w,projects))===searchText(loc))&&(!s||[w.voucherNo,w.itemCode,w.itemName,w.receiver,locationOf(w,projects)].map(searchText).join(" ").includes(s)))
+      .sort((a,b)=>(dateKey(b.date)||"").localeCompare(dateKey(a.date)||"")||String(b.id).localeCompare(String(a.id)));
+  },[warehouse,assets,projects,type,q,loc]);
+  const locations=[...new Set(warehouse.map(w=>locationOf(w,projects)))].sort((a,b)=>searchText(a).localeCompare(searchText(b),"vi"));
+  const all=rows.length>0&&rows.every(r=>selected.includes(r.id));
+  const toggleAll=()=>setSelected(all?selected.filter(id=>!rows.some(r=>r.id===id)):[...new Set([...selected,...rows.map(r=>r.id)])]);
+  return <div>
+    <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+      <div style={{flex:1,minWidth:260}}><Input value={q} onChange={setQ} placeholder="Tìm số phiếu, mã hàng, tên tài sản, công trình..." /></div>
+      <select value={loc} onChange={e=>setLoc(e.target.value)} style={{minWidth:220,border:`1px solid ${BORDER}`,borderRadius:8,padding:9}}><option value="">Tất cả Kho/Công trình</option>{locations.map(x=><option key={x}>{x}</option>)}</select>
+      <Button kind="danger" disabled={!selected.length} onClick={()=>{const ok=deleteWarehouseTransactionsV9({ids:selected,data,setData,requireAdmin,notify});if(ok)setSelected([]);}}>Xóa ({selected.length})</Button>
+    </div>
+    <div style={{overflow:"auto",border:`1px solid ${BORDER}`,borderRadius:10,background:"#fff"}}>
+      <table style={{width:"100%",minWidth:1050,borderCollapse:"collapse"}}><thead><tr style={{background:BRAND_SOFT}}>
+        {["","Số phiếu","Ngày","Mã hàng","Tên tài sản","Kho/Công trình","Loại","SL","ĐVT","Người giao/nhận"].map((h,i)=><th key={i} style={{padding:9,textAlign:"left",fontSize:12,color:MUTED}}>{i===0?<input type="checkbox" checked={all} onChange={toggleAll}/>:h}</th>)}
+      </tr></thead><tbody>{rows.map(w=>{const a=resolveAsset(w,assets);return <tr key={w.id} style={{borderTop:`1px solid ${BORDER}`}}>
+        <td style={{padding:9}}><input type="checkbox" checked={selected.includes(w.id)} onChange={()=>setSelected(s=>s.includes(w.id)?s.filter(x=>x!==w.id):[...s,w.id])}/></td>
+        <td style={{padding:9,fontFamily:"monospace"}}>{w.voucherNo||"—"}</td><td style={{padding:9}}>{dateVN(w.date)}</td><td style={{padding:9}}>{a?.code||w.itemCode||"—"}</td><td style={{padding:9}}>{a?.name||w.itemName||"—"}</td><td style={{padding:9}}>{locationOf(w,projects)}</td><td style={{padding:9}}>{isIn(w)?"Nhập kho":"Xuất kho"}</td><td style={{padding:9}}>{Number(w.quantity||0).toLocaleString("vi-VN")}</td><td style={{padding:9}}>{w.unit||a?.unit||"Cái"}</td><td style={{padding:9}}>{w.receiver||"—"}</td>
+      </tr>})}{!rows.length&&<tr><td colSpan={10} style={{padding:35,textAlign:"center",color:MUTED}}>Không có phiếu phù hợp.</td></tr>}</tbody></table>
+    </div>
+  </div>;
+}
 
-  {modal?.type === "warehouseIn" && (
-    <WarehouseTxModalV8
-      title="Lập phiếu nhập kho"
-      fixedType="nhap"
-      assets={data.assets}
-      projects={data.projects}
-      onClose={() => setModal(null)}
-      onSubmit={form => {
-        const ok = createWarehouseTransactionV8({
-          form,
-          data,
-          setData,
-          requireAdmin,
-          notify,
-          logAction,
-        });
-        if (ok) setModal(null);
-      }}
-    />
-  )}
+export async function readExcelRows(file) {
+  const buffer=await file.arrayBuffer();
+  const wb=XLSX.read(buffer,{type:"array",cellDates:true});
+  const sheet=wb.Sheets[wb.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(sheet,{defval:""});
+}
 
-  PHIẾU XUẤT:
+export async function importAssetCatalogV9({file,data,setData,requireAdmin,notify}) {
+  if(requireAdmin && !requireAdmin()) return false;
+  try{
+    const rows=await readExcelRows(file), existing=data.assets||[], byCode=new Map(existing.map(a=>[searchText(a.code),a]));
+    const imported=[],seen=new Set(),errors=[];
+    rows.forEach((r,i)=>{
+      const code=text(r["Mã quản lý"]||r["Mã hàng"]||r["Mã tài sản"]||r.code), name=text(r["Tên tài sản"]||r["Tên hàng"]||r["Tên thiết bị"]||r.name);
+      if(!code||!name){errors.push(`Dòng ${i+2}: thiếu mã hoặc tên.`);return;}
+      const k=searchText(code); if(seen.has(k)){errors.push(`Dòng ${i+2}: mã ${code} trùng.`);return;} seen.add(k);
+      const old=byCode.get(k);
+      imported.push({...old,id:old?.id||uid("as"),code,name,
+        category:text(r["Loại tài sản"]||r["Loại"]||old?.category||"Khác"),
+        assetGroup:text(r["Nhóm tài sản"]||r["Nhóm"]||old?.assetGroup||"Thiết bị chính"),
+        ownership:text(r["Nguồn gốc"]||old?.ownership||"Công ty"),
+        unit:text(r["Đơn vị tính"]||r["ĐVT"]||old?.unit||"Cái"),
+        serial:text(r["Serial"]||r["Số serial"]||old?.serial||""),
+        cost:Number(r["Đơn giá"]||r["Nguyên giá"]||old?.cost||0)||0});
+    });
+    if(!imported.length){notify?.(errors[0]||"Không có dòng hợp lệ.");return false;}
+    const codes=new Set(imported.map(a=>searchText(a.code)));
+    setData({...data,assets:[...imported,...existing.filter(a=>!codes.has(searchText(a.code)))],
+      warehouse:Array.isArray(data.warehouse)?data.warehouse:[],transactions:Array.isArray(data.transactions)?data.transactions:[]});
+    notify?.(`Đã cập nhật ${imported.length} danh mục. Không tạo phiếu nhập/xuất.`);
+    return true;
+  }catch(e){console.error(e);notify?.("Không đọc được file Excel danh mục.");return false;}
+}
 
-  {modal?.type === "warehouseOut" && (
-    <WarehouseTxModalV8
-      title="Lập phiếu xuất kho"
-      fixedType="xuat"
-      assets={data.assets}
-      projects={data.projects}
-      onClose={() => setModal(null)}
-      onSubmit={form => {
-        const ok = createWarehouseTransactionV8({
-          form,
-          data,
-          setData,
-          requireAdmin,
-          notify,
-          logAction,
-        });
-        if (ok) setModal(null);
-      }}
-    />
-  )}
+export async function importWarehouseExcelV9({file,data,setData,requireAdmin,notify}) {
+  if(requireAdmin && !requireAdmin()) return false;
+  try{
+    const rows=await readExcelRows(file), assets=data.assets||[], projects=data.projects||[], existing=data.warehouse||[], imported=[],errors=[];
+    rows.forEach((r,i)=>{
+      const row=i+2, raw=searchText(r["Loại phiếu"]||r["Loại chứng từ"]||"Nhập kho"), type=raw.includes("xuat")?"xuat":"nhap";
+      const d=dateKey(r["Ngày tháng"]||r["Ngày chứng từ"]||r["Ngày"]); if(!d){errors.push(`Dòng ${row}: ngày không hợp lệ.`);return;}
+      const resolved=resolveAssetFromRow(r,assets); if(resolved.error){errors.push(`Dòng ${row}: ${resolved.error}`);return;}
+      const a=resolved.asset,q=Number(r["Số lượng"]??r["SL"]??0); if(!(q>0)){errors.push(`Dòng ${row}: số lượng phải > 0.`);return;}
+      const loc=text(r["Kho/Công trình"]||r["Công trình"]||r["Tên kho"]||r["Kho"]); if(!loc){errors.push(`Dòng ${row}: thiếu Kho/Công trình.`);return;}
+      const p=projects.find(x=>searchText(x.name)===searchText(loc));
+      const locationType=searchText(r["Loại địa điểm"]||"").includes("cong trinh")?"project":searchText(r["Loại địa điểm"]||"").includes("kho")?"warehouse":p?"project":"warehouse";
+      const voucher=text(r["Số phiếu"])||`${type==="nhap"?"PN":"PX"}-${d.replaceAll("-","")}-${String(existing.length+imported.length+1).padStart(3,"0")}`;
+      if(existing.some(w=>searchText(w.voucherNo)===searchText(voucher))||imported.some(w=>searchText(w.voucherNo)===searchText(voucher))){errors.push(`Dòng ${row}: số phiếu ${voucher} bị trùng.`);return;}
+      imported.push({id:uid("wh"),voucherNo:voucher,assetId:a.id,type,quantity:q,date:d,unitCost:Number(r["Đơn giá"]??r["Đơn giá nhập"]??r["Đơn giá xuất"]??0)||0,
+        total:q*(Number(r["Đơn giá"]??r["Đơn giá nhập"]??r["Đơn giá xuất"]??0)||0),unit:text(r["Đơn vị tính"]||r["ĐVT"])||a.unit||"Cái",
+        receiver:text(r["Người giao/nhận"]),note:text(r["Ghi chú"]),category:a.category||"Khác",assetGroup:a.assetGroup||"Thiết bị chính",ownership:a.ownership||"Công ty",
+        locationType,locationName:loc,warehouseName:locationType==="warehouse"?loc:"",projectId:locationType==="project"?p?.id||null:null,itemName:a.name,itemCode:a.code,serial:a.serial||""});
+    });
+    if(errors.length){notify?.(`Import bị dừng: ${errors.length} lỗi. ${errors[0]}`);return false;}
+    const histories=imported.map(tx=>({id:uid("tx"),warehouseTxId:tx.id,assetId:tx.assetId,type:tx.type==="nhap"?"nhap_kho":"xuat_kho",date:tx.date,title:`${tx.type==="nhap"?"Nhập kho":"Xuất kho"} ${tx.voucherNo}`,detail:`${tx.itemName} · ${tx.locationName} · ${tx.receiver||""}`,amount:tx.total}));
+    setData({...data,warehouse:[...imported,...existing],transactions:[...histories,...(data.transactions||[])]});
+    notify?.(`Đã import ${imported.length} phiếu kho.`);
+    return true;
+  }catch(e){console.error(e);notify?.("Không đọc được file Excel phiếu kho.");return false;}
+}
 
-  TAB PHIẾU NHẬP:
+export function downloadWarehouseTemplateV9() {
+  const headers=["Loại phiếu","Số phiếu","Ngày tháng","Tên tài sản","Mã hàng","Kho/Công trình","Loại địa điểm","Loại tài sản","Nhóm tài sản","Nguồn gốc","Người giao/nhận","Số lượng","Đơn vị tính","Đơn giá","Thành tiền","Ghi chú"];
+  const rows=[["Nhập kho","PN-20260824-001","2026-08-24","Máy xúc 01","MX-01","Cao Xà Lá - Thanh Xuân","Công trình","Máy xúc","Thiết bị chính","Thuê","Nguyễn Văn A",1,"Cái",0,0,""]];
+  const ws=XLSX.utils.aoa_to_sheet([headers,...rows]); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"Phiếu kho"); XLSX.writeFile(wb,"Mau_Import_Phieu_Nhap_Xuat_Kho_V9.xlsx");
+}
 
-  <WarehouseTransactionTableV8
-    warehouse={data.warehouse}
-    assets={data.assets}
-    projects={data.projects}
-    type="nhap"
-    requireAdmin={requireAdmin}
-    onDeleteSelected={ids =>
-      deleteWarehouseTransactionsV8({
-        ids,
-        data,
-        setData,
-        requireAdmin,
-        notify,
-        logAction,
-      })
-    }
-  />
+export function WarehouseReportV9({warehouse,assets,projects,filter,onFilterChange}) {
+  const report=useMemo(()=>makeWarehouseReportV9({warehouse,assets,projects,filter}),[warehouse,assets,projects,filter]);
+  return <div style={{background:SURFACE,border:`1px solid ${BORDER}`,borderRadius:10,overflow:"hidden"}}>
+    <div style={{padding:14,borderBottom:`1px solid ${BORDER}`,display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+      <strong>Báo cáo nhập xuất tồn</strong>
+      <span style={{fontSize:12,color:MUTED}}>Tồn đến {report.asOfDateVN||"ngày hiện tại"}</span>
+      <span style={{marginLeft:"auto",fontSize:12,color:BRAND,fontWeight:700}}>Tồn: {report.summary.qty.toLocaleString("vi-VN")}</span>
+    </div>
+    <div style={{overflow:"auto"}}>
+      <table style={{width:"100%",minWidth:1100,borderCollapse:"collapse"}}><thead><tr style={{background:BRAND_SOFT}}>{report.headers.map(h=><th key={h} style={{padding:9,textAlign:"left",fontSize:12,color:MUTED}}>{h}</th>)}</tr></thead>
+      <tbody>{report.rows.map(r=><tr key={`${r.assetId}-${r.location}`} style={{borderTop:`1px solid ${BORDER}`}}>{[r.location,r.category,r.group,r.ownership,r.code,r.name,r.unit,r.inQty,r.outQty,r.balanceQty,r.balanceValue].map((v,i)=><td key={i} style={{padding:9,fontSize:12}}>{typeof v==="number"?(i===10?Math.round(v).toLocaleString("vi-VN"):v.toLocaleString("vi-VN")):v}</td>)}</tr>)}{!report.rows.length&&<tr><td colSpan={11} style={{padding:35,textAlign:"center",color:MUTED}}>Không có thiết bị tồn theo điều kiện lọc.</td></tr>}</tbody></table>
+    </div>
+  </div>;
+}
 
-  TAB PHIẾU XUẤT:
-  tương tự nhưng type="xuat".
+export function WarehouseCoreV9({data,setData,requireAdmin,notify,logAction}) {
+  const [tab,setTab]=useState("nhap"),[modal,setModal]=useState(null),[filter,setFilter]=useState({asOfDate:new Date().toLocaleDateString("en-CA"),category:"",group:"",ownership:"",locationName:"",projectId:""});
+  const projects=data.projects||[],assets=data.assets||[],warehouse=data.warehouse||[];
+  const report=useMemo(()=>makeWarehouseReportV9({warehouse,assets,projects,filter}),[warehouse,assets,projects,filter]);
+  const categories=[...new Set(assets.map(a=>a.category).filter(Boolean))],groups=[...new Set(assets.map(a=>a.assetGroup).filter(Boolean))],owners=[...new Set(assets.map(a=>a.ownership).filter(Boolean))];
+  const locations=[...new Set(warehouse.map(w=>locationOf(w,projects)))].sort((a,b)=>searchText(a).localeCompare(searchText(b),"vi"));
+  const importFile=async(e,kind)=>{const f=e.target.files?.[0];if(!f)return; if(kind==="assets") await importAssetCatalogV9({file:f,data,setData,requireAdmin,notify}); else await importWarehouseExcelV9({file:f,data,setData,requireAdmin,notify}); e.target.value="";};
+  return <div style={{background:PAPER,minHeight:"100%",color:INK}}>
+    <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
+      <div><h2 style={{margin:"0 0 3px",fontSize:22}}>Kho — Nhập / Xuất / Tồn</h2><div style={{fontSize:12,color:MUTED}}>Theo dõi thiết bị theo Kho/Công trình</div></div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}><Button onClick={downloadWarehouseTemplateV9}>Tải mẫu Excel</Button><label style={{...btnLabel()}}><input hidden type="file" accept=".xlsx,.xls,.csv" onChange={e=>importFile(e,"warehouse")} />Import phiếu Excel</label></div>
+    </div>
+    <div style={{display:"flex",borderBottom:`1px solid ${BORDER}`,gap:4,marginBottom:14}}>
+      {[["nhap","Phiếu nhập kho"],["xuat","Phiếu xuất kho"],["report","Báo cáo nhập xuất tồn"]].map(([id,label])=><button key={id} type="button" onClick={()=>setTab(id)} style={{border:0,borderBottom:tab===id?`3px solid ${BRAND}`:"3px solid transparent",background:"transparent",padding:"10px 14px",fontWeight:tab===id?700:500,color:tab===id?BRAND:INK}}>{label}</button>)}
+    </div>
+    {tab!=="report"&&<div style={{display:"flex",justifyContent:"flex-end",marginBottom:10}}><Button kind="primary" onClick={()=>setModal(tab)}>+ Lập phiếu {tab==="nhap"?"nhập":"xuất"}</Button></div>}
+    {tab==="nhap"&&<TxTable warehouse={warehouse} assets={assets} projects={projects} data={data} type="nhap" requireAdmin={requireAdmin} notify={notify} setData={setData}/>}
+    {tab==="xuat"&&<TxTable warehouse={warehouse} assets={assets} projects={projects} data={data} type="xuat" requireAdmin={requireAdmin} notify={notify} setData={setData}/>}
+    {tab==="report"&&<div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginBottom:12}}>
+        <Field label="Loại tài sản"><select value={filter.category} onChange={e=>setFilter(f=>({...f,category:e.target.value}))} style={sel()}><option value="">Tất cả loại</option>{categories.map(x=><option key={x}>{x}</option>)}</select></Field>
+        <Field label="Nhóm tài sản"><select value={filter.group} onChange={e=>setFilter(f=>({...f,group:e.target.value}))} style={sel()}><option value="">Tất cả nhóm</option>{groups.map(x=><option key={x}>{x}</option>)}</select></Field>
+        <Field label="Nguồn gốc"><select value={filter.ownership} onChange={e=>setFilter(f=>({...f,ownership:e.target.value}))} style={sel()}><option value="">Tất cả nguồn gốc</option>{owners.map(x=><option key={x}>{x}</option>)}</select></Field>
+        <Field label="Kho/Công trình"><select value={filter.locationName} onChange={e=>setFilter(f=>({...f,locationName:e.target.value}))} style={sel()}><option value="">Tất cả</option>{locations.map(x=><option key={x}>{x}</option>)}</select></Field>
+        <Field label="Tồn đến ngày"><Input type="date" value={filter.asOfDate} onChange={v=>setFilter(f=>({...f,asOfDate:v}))}/></Field>
+      </div>
+      <WarehouseReportV9 warehouse={warehouse} assets={assets} projects={projects} filter={filter}/>
+    </div>}
+    {modal&&<TxModal assets={assets} projects={projects} data={data} type={modal} requireAdmin={requireAdmin} notify={notify} setData={setData} onClose={()=>setModal(null)} onSaved={()=>setModal(null)}/>}
+  </div>;
+}
 
-  IMPORT DANH MỤC:
-  importAssetCatalogV8(...)
-
-  IMPORT PHIẾU:
-  importWarehouseExcelV8(...)
-
-  BÁO CÁO:
-  makeWarehouseReportV8(...)
-
-  LƯU Ý:
-  - Không render WarehouseTxModal cũ.
-  - Không gọi addWarehouseTx cũ.
-  - Không gọi importWarehouseExcel cũ.
-  - Không có đoạn assets import => warehouse.
-*/
+function btnLabel(){return {display:"inline-flex",alignItems:"center",border:`1px solid ${BORDER}`,borderRadius:8,padding:"8px 12px",fontSize:13,fontWeight:600,cursor:"pointer",background:"#fff"}}
+function sel(){return {width:"100%",boxSizing:"border-box",border:`1px solid ${BORDER}`,borderRadius:8,padding:9,fontSize:13,background:"#fff"}}
