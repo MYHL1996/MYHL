@@ -1,5 +1,6 @@
 import { Component, useState, useEffect, useMemo, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import { supabase } from "./supabaseClient";
 import {
   LayoutDashboard, Boxes, Users2, Wrench, History, FileText, Archive, Warehouse, Fuel, Cable, CircleDollarSign, UploadCloud, DownloadCloud,
@@ -8,7 +9,7 @@ import {
   ChevronDown, Package, Stamp, AlertCircle, Loader2, ClipboardCheck,
   Settings as SettingsIcon, FileDown, Printer, Check, PencilLine,
   Lock, LogOut, User, ShieldAlert, Eye, EyeOff, Download, Upload, RotateCcw, HardDrive, Save,
-  PackagePlus, PackageMinus, FileSpreadsheet,
+  PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
 /* ============================== DESIGN TOKENS ==============================
@@ -143,6 +144,42 @@ function exportExcel(filename, headers, rows, title = "BÁO CÁO") {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Báo cáo");
   XLSX.writeFile(wb, `${filename}.xlsx`);
+}
+
+
+async function exportStyledExcel(filename, title, headers, rows, companyName = "MYHL - Quản lý tài sản") {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "MYHL - Quản lý tài sản";
+  wb.created = new Date();
+  const ws = wb.addWorksheet("Báo cáo", { views: [{ state: "frozen", ySplit: 5 }] });
+  const lastCol = Math.max(1, headers.length);
+  ws.mergeCells(1, 1, 1, lastCol);
+  ws.getCell(1,1).value = String(companyName || "MYHL - Quản lý tài sản").toUpperCase();
+  ws.getCell(1,1).font = { bold:true, size:12, color:{argb:"FFD71920"} };
+  ws.getCell(1,1).alignment = { horizontal:"left", vertical:"middle" };
+  ws.mergeCells(2, 1, 2, lastCol);
+  ws.getCell(2,1).value = String(title || "BÁO CÁO").toUpperCase();
+  ws.getCell(2,1).font = { bold:true, size:18, color:{argb:"FF111827"} };
+  ws.getCell(2,1).alignment = { horizontal:"center", vertical:"middle" };
+  ws.mergeCells(3, 1, 3, lastCol);
+  ws.getCell(3,1).value = `Ngày xuất: ${new Date().toLocaleString("vi-VN")}   •   Tổng số dòng: ${rows.length}`;
+  ws.getCell(3,1).font = { italic:true, size:10, color:{argb:"FF667085"} };
+  ws.getCell(3,1).alignment = { horizontal:"center" };
+  ws.getRow(1).height=22; ws.getRow(2).height=30; ws.getRow(3).height=20; ws.getRow(4).height=8;
+  const headerRow = ws.getRow(5);
+  headers.forEach((h,i)=>{ const c=headerRow.getCell(i+1); c.value=h; c.font={bold:true,color:{argb:"FFFFFFFF"},size:10}; c.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFD71920"}}; c.alignment={horizontal:"center",vertical:"middle",wrapText:true}; c.border={top:{style:"thin",color:{argb:"FFD71920"}},left:{style:"thin",color:{argb:"FFD0D5DD"}},bottom:{style:"thin",color:{argb:"FFD0D5DD"}},right:{style:"thin",color:{argb:"FFD0D5DD"}}}; });
+  headerRow.height=28;
+  rows.forEach((r,ri)=>{
+    const row=ws.getRow(6+ri); row.height=21;
+    headers.forEach((_,ci)=>{ const c=row.getCell(ci+1); const v=r[ci]; c.value=(v===null||v===undefined)?"":v; c.font={size:10,color:{argb:"FF101828"}}; c.alignment={vertical:"top",wrapText:true}; c.border={top:{style:"thin",color:{argb:"FFE4E7EC"}},left:{style:"thin",color:{argb:"FFE4E7EC"}},bottom:{style:"thin",color:{argb:"FFE4E7EC"}},right:{style:"thin",color:{argb:"FFE4E7EC"}}}; if(ri%2===1)c.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFFFF7F7"}}; });
+  });
+  headers.forEach((h,i)=>{ let max=String(h).length; rows.slice(0,500).forEach(r=>max=Math.max(max,String(r[i]??"").length)); ws.getColumn(i+1).width=Math.min(38,Math.max(11,max+2)); });
+  ws.autoFilter={from:{row:5,column:1},to:{row:5,column:lastCol}};
+  ws.pageSetup={orientation:"landscape",paperSize:9,fitToPage:true,fitToWidth:1,fitToHeight:0,margins:{left:0.25,right:0.25,top:0.5,bottom:0.5,header:0.2,footer:0.2}};
+  ws.headerFooter.oddFooter="&LMYHL - Quản lý tài sản&CTrang &P / &N&R&D &T";
+  const buffer=await wb.xlsx.writeBuffer();
+  const blob=new Blob([buffer],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=`${filename}.xlsx`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 
 function downloadExcelTemplate(filename, headers, sampleRows = []) {
@@ -635,6 +672,7 @@ export default function AssetManagementApp() {
   const [modal, setModal] = useState(null); // {type, assetId?}
   const [toast, setToast] = useState(null);
   const [printJob, setPrintJob] = useState(null); // {title, headers, rows}
+  const [reportDesigner, setReportDesigner] = useState(null);
   const [currentUser, setCurrentUser] = useState(null); // {id, email, name, role} — restored from Supabase session
   const [authChecked, setAuthChecked] = useState(false);
   const [backups, setBackups] = useState([]); // [{id, label, created_by, created_at}] — from the `backups` table
@@ -1296,13 +1334,11 @@ export default function AssetManagementApp() {
 
   /* ---------- export ---------- */
 
-  const doExportExcel = (filename, headers, rows) => {
-    try { exportExcel(filename, headers, rows, filename.replaceAll("-", " ").toUpperCase()); notify("Đã xuất file Excel"); }
-    catch (e) { notify("Xuất Excel thất bại"); }
+  const openReportDesigner = (mode, filename, title, headers, rows) => {
+    setReportDesigner({ mode, filename, title, headers, rows, selected: headers.map((_,i)=>i) });
   };
-  const doExportPdf = (title, headers, rows) => {
-    setPrintJob({ title, headers, rows: rows.map((r) => r.map((c) => (c == null ? "" : String(c)))) });
-  };
+  const doExportExcel = (filename, headers, rows) => openReportDesigner("excel", filename, filename.replaceAll("-", " ").toUpperCase(), headers, rows);
+  const doExportPdf = (title, headers, rows) => openReportDesigner("pdf", title.toLowerCase().replace(/[^a-z0-9]+/gi,"-"), title, headers, rows);
 
   /* ---------- derived ---------- */
 
@@ -1463,9 +1499,29 @@ export default function AssetManagementApp() {
         )}
       </div>
 
+      {reportDesigner && <ReportDesigner job={reportDesigner} companyName={settings.companyName} onClose={()=>setReportDesigner(null)} onPrint={(job)=>{setReportDesigner(null);setPrintJob(job)}} onExcel={async(job)=>{try{await exportStyledExcel(job.filename,job.title,job.headers,job.rows,settings.companyName);notify("Đã xuất Excel theo mẫu tùy chỉnh");setReportDesigner(null)}catch(e){console.error(e);notify("Xuất Excel thất bại")}}} />}
       {printJob && <PrintArea job={printJob} companyName={settings.companyName} />}
     </>
   );
+}
+
+
+function ReportDesigner({ job, companyName, onClose, onExcel, onPrint }) {
+  const [selected,setSelected]=useState(job.selected || job.headers.map((_,i)=>i));
+  const toggle=(i)=>setSelected(v=>v.includes(i)?v.filter(x=>x!==i):[...v,i]);
+  const move=(pos,dir)=>setSelected(v=>{const n=[...v],to=pos+dir;if(to<0||to>=n.length)return n;[n[pos],n[to]]=[n[to],n[pos]];return n});
+  const chosen=selected.map(i=>job.headers[i]);
+  const rows=job.rows.map(r=>selected.map(i=>r[i]));
+  const run=()=>{if(!selected.length)return alert("Hãy chọn ít nhất 1 cột báo cáo."); const out={filename:job.filename,title:job.title,headers:chosen,rows}; job.mode==="excel"?onExcel(out):onPrint({...out,rows:rows.map(r=>r.map(c=>c==null?"":String(c)))})};
+  return <Modal title="Thiết kế báo cáo trước khi xuất" onClose={onClose} wide>
+    <div className="grid grid-cols-[1fr_1.15fr] gap-5">
+      <div><div className="flex items-center justify-between mb-2"><div><div className="text-[13px] font-semibold">Cột thông tin</div><div className="text-[11px]" style={{color:TOKENS.muted}}>Chọn cột và sắp xếp thứ tự xuất.</div></div><button className="text-[11px] font-semibold" style={{color:TOKENS.brand}} onClick={()=>setSelected(job.headers.map((_,i)=>i))}>Mẫu mặc định</button></div>
+        <div className="rounded-lg overflow-hidden" style={{border:`1px solid ${TOKENS.border}`}}>{job.headers.map((h,i)=>{const pos=selected.indexOf(i),on=pos>=0;return <div key={`${h}-${i}`} className="flex items-center gap-2 px-3 py-2" style={{borderBottom:`1px solid ${TOKENS.border}`,background:on?TOKENS.brandSoft:"#fff"}}><input type="checkbox" checked={on} onChange={()=>toggle(i)}/><span className="flex-1 text-[12px]">{h}</span>{on&&<><span className="text-[10px] aa-mono" style={{color:TOKENS.muted}}>#{pos+1}</span><button disabled={pos===0} onClick={()=>move(pos,-1)} className="p-1 disabled:opacity-25"><ArrowUp size={14}/></button><button disabled={pos===selected.length-1} onClick={()=>move(pos,1)} className="p-1 disabled:opacity-25"><ArrowDown size={14}/></button></>}</div>})}</div>
+      </div>
+      <div><div className="flex items-center gap-2 mb-2"><SlidersHorizontal size={15}/><div className="text-[13px] font-semibold">Xem trước mẫu báo cáo</div></div><div className="rounded-lg bg-white p-4 overflow-auto max-h-[520px]" style={{border:`1px solid ${TOKENS.border}`}}><div className="text-[10px] font-bold" style={{color:TOKENS.brand}}>{String(companyName||"MYHL").toUpperCase()}</div><div className="text-center font-extrabold text-[15px] uppercase my-2">{job.title}</div><div className="text-center text-[9px] mb-3" style={{color:TOKENS.muted}}>Ngày xuất: {new Date().toLocaleString("vi-VN")}</div><table className="w-full border-collapse text-[8px]"><thead><tr>{chosen.map((h,i)=><th key={i} className="p-1 text-white text-center" style={{background:TOKENS.brand,border:"1px solid #D0D5DD"}}>{h}</th>)}</tr></thead><tbody>{rows.slice(0,6).map((r,ri)=><tr key={ri}>{r.map((c,ci)=><td key={ci} className="p-1" style={{border:"1px solid #D0D5DD",background:ri%2?"#FFF7F7":"#fff"}}>{String(c??"")}</td>)}</tr>)}</tbody></table><div className="text-[8px] mt-2" style={{color:TOKENS.muted}}>Xem trước 6/{rows.length} dòng • File chính thức có kẻ bảng, tiêu đề, bộ lọc và căn cột.</div></div></div>
+    </div>
+    <div className="flex justify-between items-center mt-5 pt-4" style={{borderTop:`1px solid ${TOKENS.border}`}}><div className="text-[11px]" style={{color:TOKENS.muted}}>Đã chọn <b>{selected.length}/{job.headers.length}</b> cột.</div><div className="flex gap-2"><Btn onClick={onClose}>Hủy</Btn><Btn kind="primary" icon={job.mode==="excel"?FileDown:Printer} onClick={run}>{job.mode==="excel"?"Xuất Excel theo mẫu":"Xuất PDF theo mẫu"}</Btn></div></div>
+  </Modal>
 }
 
 const PRINT_CSS = `
