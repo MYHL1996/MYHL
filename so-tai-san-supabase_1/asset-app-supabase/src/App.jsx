@@ -8,6 +8,7 @@ import {
   ChevronDown, Package, Stamp, AlertCircle, Loader2, ClipboardCheck,
   Settings as SettingsIcon, FileDown, Printer, Check, PencilLine,
   Lock, LogOut, User, ShieldAlert, Eye, EyeOff, Download, Upload, RotateCcw, HardDrive, Save,
+  PackagePlus, PackageMinus, FileSpreadsheet,
 } from "lucide-react";
 
 /* ============================== DESIGN TOKENS ==============================
