@@ -11,6 +11,8 @@ import {
   PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
+const CORE_VERSION = "v17.0.0-verified";
+
 /* ============================== DESIGN TOKENS ==============================
 Color:
   paper       #F5F6F2  page background, unbleached ledger paper
@@ -1589,6 +1591,7 @@ function Sidebar({ active, setActive, data, counts, currentUser, isAdmin, onLogo
           <button onClick={onChangePassword} title="Đổi mật khẩu" className="p-1.5 rounded-lg hover:bg-white" style={{ color: TOKENS.muted }}><Lock size={14} /></button>
           <button onClick={onLogout} title="Đăng xuất" className="p-1.5 rounded-lg hover:bg-white" style={{ color: TOKENS.muted }}><LogOut size={14} /></button>
         </div>
+        <div className="mt-1 text-center aa-mono text-[8px]" style={{ color: "#98A2B3" }}>Core {CORE_VERSION}</div>
       </div>
     </aside>
   );
