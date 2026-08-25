@@ -1,6 +1,5 @@
 import { Component, useState, useEffect, useMemo, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
-import ExcelJS from "exceljs";
 import { supabase } from "./supabaseClient";
 import {
   LayoutDashboard, Boxes, Users2, Wrench, History, FileText, Archive, Warehouse, Fuel, Cable, CircleDollarSign, UploadCloud, DownloadCloud,
@@ -148,38 +147,9 @@ function exportExcel(filename, headers, rows, title = "BÁO CÁO") {
 
 
 async function exportStyledExcel(filename, title, headers, rows, companyName = "MYHL - Quản lý tài sản") {
-  const wb = new ExcelJS.Workbook();
-  wb.creator = "MYHL - Quản lý tài sản";
-  wb.created = new Date();
-  const ws = wb.addWorksheet("Báo cáo", { views: [{ state: "frozen", ySplit: 5 }] });
-  const lastCol = Math.max(1, headers.length);
-  ws.mergeCells(1, 1, 1, lastCol);
-  ws.getCell(1,1).value = String(companyName || "MYHL - Quản lý tài sản").toUpperCase();
-  ws.getCell(1,1).font = { bold:true, size:12, color:{argb:"FFD71920"} };
-  ws.getCell(1,1).alignment = { horizontal:"left", vertical:"middle" };
-  ws.mergeCells(2, 1, 2, lastCol);
-  ws.getCell(2,1).value = String(title || "BÁO CÁO").toUpperCase();
-  ws.getCell(2,1).font = { bold:true, size:18, color:{argb:"FF111827"} };
-  ws.getCell(2,1).alignment = { horizontal:"center", vertical:"middle" };
-  ws.mergeCells(3, 1, 3, lastCol);
-  ws.getCell(3,1).value = `Ngày xuất: ${new Date().toLocaleString("vi-VN")}   •   Tổng số dòng: ${rows.length}`;
-  ws.getCell(3,1).font = { italic:true, size:10, color:{argb:"FF667085"} };
-  ws.getCell(3,1).alignment = { horizontal:"center" };
-  ws.getRow(1).height=22; ws.getRow(2).height=30; ws.getRow(3).height=20; ws.getRow(4).height=8;
-  const headerRow = ws.getRow(5);
-  headers.forEach((h,i)=>{ const c=headerRow.getCell(i+1); c.value=h; c.font={bold:true,color:{argb:"FFFFFFFF"},size:10}; c.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFD71920"}}; c.alignment={horizontal:"center",vertical:"middle",wrapText:true}; c.border={top:{style:"thin",color:{argb:"FFD71920"}},left:{style:"thin",color:{argb:"FFD0D5DD"}},bottom:{style:"thin",color:{argb:"FFD0D5DD"}},right:{style:"thin",color:{argb:"FFD0D5DD"}}}; });
-  headerRow.height=28;
-  rows.forEach((r,ri)=>{
-    const row=ws.getRow(6+ri); row.height=21;
-    headers.forEach((_,ci)=>{ const c=row.getCell(ci+1); const v=r[ci]; c.value=(v===null||v===undefined)?"":v; c.font={size:10,color:{argb:"FF101828"}}; c.alignment={vertical:"top",wrapText:true}; c.border={top:{style:"thin",color:{argb:"FFE4E7EC"}},left:{style:"thin",color:{argb:"FFE4E7EC"}},bottom:{style:"thin",color:{argb:"FFE4E7EC"}},right:{style:"thin",color:{argb:"FFE4E7EC"}}}; if(ri%2===1)c.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFFFF7F7"}}; });
-  });
-  headers.forEach((h,i)=>{ let max=String(h).length; rows.slice(0,500).forEach(r=>max=Math.max(max,String(r[i]??"").length)); ws.getColumn(i+1).width=Math.min(38,Math.max(11,max+2)); });
-  ws.autoFilter={from:{row:5,column:1},to:{row:5,column:lastCol}};
-  ws.pageSetup={orientation:"landscape",paperSize:9,fitToPage:true,fitToWidth:1,fitToHeight:0,margins:{left:0.25,right:0.25,top:0.5,bottom:0.5,header:0.2,footer:0.2}};
-  ws.headerFooter.oddFooter="&LMYHL - Quản lý tài sản&CTrang &P / &N&R&D &T";
-  const buffer=await wb.xlsx.writeBuffer();
-  const blob=new Blob([buffer],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
-  const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=`${filename}.xlsx`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  // Không phụ thuộc ExcelJS để project hiện tại trên Vercel build được chỉ với dependency `xlsx` đã có sẵn.
+  // Trình thiết kế báo cáo vẫn quyết định chính xác cột và thứ tự trước khi gọi hàm này.
+  exportExcel(filename, headers, rows, title || companyName || "BÁO CÁO");
 }
 
 function downloadExcelTemplate(filename, headers, sampleRows = []) {
