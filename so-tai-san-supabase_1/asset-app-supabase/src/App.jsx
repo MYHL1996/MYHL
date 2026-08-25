@@ -147,7 +147,7 @@ function exportExcel(filename, headers, rows, title = "BÁO CÁO") {
 
 
 async function exportStyledExcel(filename, title, headers, rows, companyName = "MYHL - Quản lý tài sản") {
-  // Không phụ thuộc ExcelJS để project hiện tại trên Vercel build được chỉ với dependency `xlsx` đã có sẵn.
+  // Xuất Excel dùng thư viện XLSX đã có sẵn trong project.
   // Trình thiết kế báo cáo vẫn quyết định chính xác cột và thứ tự trước khi gọi hàm này.
   exportExcel(filename, headers, rows, title || companyName || "BÁO CÁO");
 }
