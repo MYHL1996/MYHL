@@ -1,3 +1,4 @@
+// Core v18.0.0-map-master
 import { Component, useState, useEffect, useMemo, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 import { supabase } from "./supabaseClient";
@@ -321,8 +322,51 @@ function seed() {
   };
 
   // Tài khoản đăng nhập giờ do Supabase Auth quản lý — không còn lưu trong app_data.
-  const warehouse = assets.map((a) => ({ id: uid("wh"), voucherNo: `PN-${String(a.purchaseDate || nowIso().slice(0,10)).replaceAll("-", "")}-OPEN`, assetId: a.id, type: "nhap", quantity: Number(a.quantity || 1), date: a.purchaseDate, unitCost: a.cost, note: "Tồn đầu kỳ", projectId: a.projectId || null, locationType: a.projectId ? "project" : "warehouse", locationName: a.projectId ? projects.find(p => p.id === a.projectId)?.name || "Kho trung tâm" : "Kho trung tâm", warehouseName: a.projectId ? "" : "Kho trung tâm", itemName: a.name, itemCode: a.code, category: a.category, assetGroup: a.assetGroup, ownership: a.ownership, supplier: a.supplier || "" }));
+  // Danh mục tài sản là MASTER DATA, không phải chứng từ kho.
+  // Vì vậy seed danh mục không tự sinh tồn đầu kỳ / phiếu nhập.
+  const warehouse = [];
   return { assets, projects, transactions, repairs, liquidations, minutes, warehouse, costHistory: [], activityLog, settings };
+}
+
+// Dòng giả do các bản core cũ tạo khi Import DANH MỤC tài sản.
+// Danh mục chỉ là bảng map/master data nên các dòng này không được tính là nhập kho thật.
+function isLegacyCatalogImportStockRow(w) {
+  if (!w) return false;
+  const note = normalizeText(w.note || "");
+  const voucher = String(w.voucherNo || "").toUpperCase();
+  return note === normalizeText("Nhập từ Excel") && (!voucher || voucher.includes("-OPEN"));
+}
+
+function summarizeAssetWarehouse(assetId, warehouse = []) {
+  const rows = (Array.isArray(warehouse) ? warehouse : []).filter(w => w && w.assetId === assetId && !isLegacyCatalogImportStockRow(w));
+  let totalIn = 0, totalOut = 0, purchaseQty = 0, purchaseValue = 0;
+  const byLocation = new Map();
+
+  rows.forEach((w) => {
+    const qty = Number(w.quantity || 0);
+    if (!Number.isFinite(qty) || qty <= 0) return;
+    const type = w.type === "xuat" ? "xuat" : "nhap";
+    if (type === "nhap") totalIn += qty; else totalOut += qty;
+
+    const loc = String(w.locationName || w.warehouseName || "Kho trung tâm").trim() || "Kho trung tâm";
+    byLocation.set(loc, (byLocation.get(loc) || 0) + (type === "nhap" ? qty : -qty));
+
+    const internalReturn = ["luan_chuyen_den", "thu_hoi_sua_chua", "thu_hoi_cong_trinh"].includes(String(w.operationType || ""));
+    const unitCost = Number(w.unitCost || 0);
+    if (type === "nhap" && !internalReturn && Number.isFinite(unitCost) && unitCost > 0) {
+      purchaseQty += qty;
+      purchaseValue += qty * unitCost;
+    }
+  });
+
+  const stock = totalIn - totalOut;
+  const avgInPrice = purchaseQty > 0 ? purchaseValue / purchaseQty : 0;
+  const locations = [...byLocation.entries()]
+    .map(([name, quantity]) => ({ name, quantity }))
+    .filter(x => Math.abs(x.quantity) > 1e-9)
+    .sort((a,b) => b.quantity - a.quantity);
+
+  return { totalIn, totalOut, stock, avgInPrice, stockValue: stock * avgInPrice, locations, locationCount: locations.filter(x => x.quantity > 0).length };
 }
 
 // Fills in any fields missing from data saved by an older version of the app.
@@ -341,7 +385,9 @@ function withDefaults(d) {
     ...d,
     assets: migratedAssets,
     projects: legacyProjects,
-    warehouse: (Array.isArray(d.warehouse) ? d.warehouse : migratedAssets.map(a => ({ id: uid("wh"), assetId: a.id, type: "nhap", quantity: Number(a.quantity || 1), date: a.purchaseDate || nowIso().slice(0,10), unitCost: Number(a.cost || 0), note: "Tồn đầu kỳ" }))).map((w, i) => { const a = migratedAssets.find(x => x.id === w.assetId); const pid = w.projectId || a?.projectId || null; const loc = w.locationName || (pid ? legacyProjects.find(p => p.id === pid)?.name : "Kho trung tâm") || "Kho trung tâm"; return { ...w, voucherNo: w.voucherNo || `PN-${String(w.date || nowIso().slice(0,10)).replaceAll("-", "")}-OPEN${String(i+1).padStart(3,"0")}`, projectId: pid, locationType: w.locationType || (pid ? "project" : "warehouse"), locationName: loc, warehouseName: w.warehouseName || (pid ? "" : loc), itemName: w.itemName || a?.name || "", itemCode: w.itemCode || a?.code || "", category: w.category || a?.category || "Khác", assetGroup: w.assetGroup || a?.assetGroup || "Thiết bị chính", ownership: w.ownership || a?.ownership || "Công ty", operationType: w.operationType || (w.type === "nhap" ? "mua_moi" : "su_dung_cong_trinh"), operationLabel: w.operationLabel || OPERATION_LABELS[w.operationType] || (w.type === "nhap" ? "Mua mới bên ngoài" : "Xuất dùng tại công trình"), counterpartyLocation: w.counterpartyLocation || "", repairVendor: w.repairVendor || "", transferId: w.transferId || "" }; }),
+    // Không bao giờ suy diễn tồn kho từ Danh mục tài sản.
+    // Đồng thời loại bỏ các dòng nhập giả do Import Danh mục ở các phiên bản cũ.
+    warehouse: (Array.isArray(d.warehouse) ? d.warehouse : []).filter(w => !isLegacyCatalogImportStockRow(w)).map((w, i) => { const a = migratedAssets.find(x => x.id === w.assetId); const pid = w.projectId || null; const loc = w.locationName || (pid ? legacyProjects.find(p => p.id === pid)?.name : "Kho trung tâm") || "Kho trung tâm"; return { ...w, voucherNo: w.voucherNo || `PN-${String(w.date || nowIso().slice(0,10)).replaceAll("-", "")}-OPEN${String(i+1).padStart(3,"0")}`, projectId: pid, locationType: w.locationType || (pid ? "project" : "warehouse"), locationName: loc, warehouseName: w.warehouseName || (pid ? "" : loc), itemName: w.itemName || a?.name || "", itemCode: w.itemCode || a?.code || "", category: w.category || a?.category || "Khác", assetGroup: w.assetGroup || a?.assetGroup || "Thiết bị chính", ownership: w.ownership || a?.ownership || "Công ty", operationType: w.operationType || (w.type === "nhap" ? "mua_moi" : "su_dung_cong_trinh"), operationLabel: w.operationLabel || OPERATION_LABELS[w.operationType] || (w.type === "nhap" ? "Mua mới bên ngoài" : "Xuất dùng tại công trình"), counterpartyLocation: w.counterpartyLocation || "", repairVendor: w.repairVendor || "", transferId: w.transferId || "" }; }),
     costHistory: Array.isArray(d.costHistory) ? d.costHistory : [],
     employees: undefined,
     settings: {
@@ -803,12 +849,11 @@ export default function AssetManagementApp() {
       supplier: form.supplier, warranty: !!form.warranty, warrantyEnd: form.warrantyEnd, note: form.note || "",
       customFields: { ...(form.customFields || {}) },
     };
-    const tx = { id: uid("tx"), assetId: asset.id, type: "mua_sam", date: form.purchaseDate, title: "Mua sắm", detail: `Mua từ ${form.supplier || "nhà cung cấp chưa ghi"}`, amount: asset.cost };
+    // Thêm Danh mục chỉ tạo MASTER DATA. Phiếu nhập thực tế phải được lập trong module Kho.
     setData({
       ...data,
       assets: [asset, ...data.assets],
-      transactions: [tx, ...data.transactions],
-      activityLog: logAction(data.activityLog, `Thêm tài sản mới ${asset.code} — ${asset.name}`),
+      activityLog: logAction(data.activityLog, `Thêm mã danh mục ${asset.code} — ${asset.name}`),
     });
     notify("Đã thêm tài sản");
   };
@@ -827,29 +872,32 @@ export default function AssetManagementApp() {
     if (!requireAdmin()) return;
     const asset = assetsById[id];
     if (!asset) return;
-    if (!window.confirm(`Xoá tài sản ${asset.code} — ${asset.name}?`)) return;
-    setData({ ...data, assets: data.assets.filter(a => a.id !== id), transactions: data.transactions.filter(t => t.assetId !== id), repairs: data.repairs.filter(r => r.assetId !== id), liquidations: data.liquidations.filter(r => r.assetId !== id), minutes: data.minutes.filter(m => m.assetId !== id), warehouse: data.warehouse.filter(w => w.assetId !== id), costHistory: data.costHistory.filter(c => c.assetId !== id), activityLog: logAction(data.activityLog, `Xoá tài sản ${asset.code}`) });
-    setSelectedAssetId(null); notify("Đã xoá tài sản");
+    const hasBusinessData = (data.warehouse || []).some(w => w.assetId === id) || data.repairs.some(r => r.assetId === id) || data.liquidations.some(r => r.assetId === id) || data.minutes.some(m => m.assetId === id) || data.costHistory.some(c => c.assetId === id);
+    if (hasBusinessData) { notify(`Không thể xoá ${asset.code}: mã này đã có chứng từ/lịch sử. Hãy giữ mã để bảo toàn dữ liệu.`); return; }
+    if (!window.confirm(`Xoá mã danh mục ${asset.code} — ${asset.name}?`)) return;
+    setData({ ...data, assets: data.assets.filter(a => a.id !== id), transactions: data.transactions.filter(t => t.assetId !== id || t.type !== "mua_sam"), activityLog: logAction(data.activityLog, `Xoá mã danh mục ${asset.code}`) });
+    setSelectedAssetId(null); notify("Đã xoá mã danh mục");
   };
 
   const deleteAssets = (ids) => {
     if (!requireAdmin()) return;
     const unique = [...new Set(ids || [])].filter(Boolean);
     if (!unique.length) return;
-    if (!window.confirm(`Xoá hàng loạt ${unique.length} tài sản và toàn bộ dữ liệu liên quan?`)) return;
-    const idSet = new Set(unique);
+    const linked = new Set();
+    unique.forEach(id => {
+      if ((data.warehouse || []).some(w => w.assetId === id) || data.repairs.some(r => r.assetId === id) || data.liquidations.some(r => r.assetId === id) || data.minutes.some(m => m.assetId === id) || data.costHistory.some(c => c.assetId === id)) linked.add(id);
+    });
+    const safe = unique.filter(id => !linked.has(id));
+    if (!safe.length) { notify(`Không thể xoá ${linked.size} mã đã có chứng từ/lịch sử.`); return; }
+    if (!window.confirm(`Xoá ${safe.length} mã danh mục chưa phát sinh chứng từ${linked.size ? `; giữ lại ${linked.size} mã đã có lịch sử` : ""}?`)) return;
+    const safeSet = new Set(safe);
     setData({
       ...data,
-      assets: data.assets.filter(a => !idSet.has(a.id)),
-      transactions: data.transactions.filter(t => !idSet.has(t.assetId)),
-      repairs: data.repairs.filter(r => !idSet.has(r.assetId)),
-      liquidations: data.liquidations.filter(r => !idSet.has(r.assetId)),
-      minutes: data.minutes.filter(m => !idSet.has(m.assetId)),
-      warehouse: (data.warehouse || []).filter(w => !idSet.has(w.assetId)),
-      costHistory: data.costHistory.filter(c => !idSet.has(c.assetId)),
-      activityLog: logAction(data.activityLog, `Xoá hàng loạt ${unique.length} tài sản`),
+      assets: data.assets.filter(a => !safeSet.has(a.id)),
+      transactions: data.transactions.filter(t => !(safeSet.has(t.assetId) && t.type === "mua_sam")),
+      activityLog: logAction(data.activityLog, `Xoá ${safe.length} mã danh mục${linked.size ? `; giữ lại ${linked.size} mã có chứng từ` : ""}`),
     });
-    setSelectedAssetId(null); notify(`Đã xoá ${unique.length} tài sản`);
+    setSelectedAssetId(null); notify(`Đã xoá ${safe.length} mã${linked.size ? `; ${linked.size} mã có chứng từ được giữ lại` : ""}`);
   };
 
   const addSupplier = (form) => {
@@ -1286,9 +1334,39 @@ export default function AssetManagementApp() {
         const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
         if (!rows.length) return notify("File Excel không có dữ liệu");
         if (kind === "assets") {
-          const imported = rows.map((r,i)=>({ id: uid("as"), code: String(r["Mã quản lý"]||r.code||`IMP-${Date.now()}-${i}`), name: String(r["Tên tài sản"]||r.name||""), category: String(r["Loại"]||r.category||"Khác"), assetGroup: String(r["Nhóm tài sản"]||r.assetGroup||r["Loại"]||"Thiết bị chính"), ownership: String(r["Nguồn"]||r.ownership||"Công ty"), cost:Number(r["Nguyên giá"]||r.cost||0), purchaseDate:parseDateValue(r["Ngày mua"]||r.purchaseDate), usefulLifeMonths:Number(r["Thời gian SD"]||r.usefulLifeMonths||36), status:STATUS.UNUSED, assignedTo:null, projectId:null, department:String(r["Bộ phận"]||"Vận hành"), serial:String(r["Serial"]||""), supplier:String(r["Nhà cung cấp"]||""), warranty:false, warrantyEnd:"", note:String(r["Ghi chú"]||""), quantity:Number(r["Số lượng"]||r.quantity||1), unit:String(r["Đơn vị tính"]||r.unit||"Cái"), customFields:{} }));
-          const wh = imported.map(a=>({id:uid("wh"),assetId:a.id,type:"nhap",quantity:a.quantity||1,date:a.purchaseDate,unitCost:a.cost,note:"Nhập từ Excel"}));
-          setData({...data, assets:[...imported,...data.assets], warehouse:[...wh,...data.warehouse], activityLog:logAction(data.activityLog,`Import ${imported.length} tài sản từ Excel`)}); notify(`Đã import ${imported.length} tài sản`);
+          const byCode = new Map(data.assets.map(a => [normalizeText(a.code), a]));
+          let added = 0, updated = 0, skipped = 0;
+          const nextAssets = [...data.assets];
+          rows.forEach((r,i) => {
+            const code = String(r["Mã quản lý"] || r["Mã tài sản"] || r.code || "").trim();
+            const name = String(r["Tên tài sản"] || r.name || "").trim();
+            if (!code || !name) { skipped += 1; return; }
+            const patch = {
+              code, name,
+              category: String(r["Loại"] || r["Loại tài sản"] || r.category || "Khác").trim() || "Khác",
+              assetGroup: String(r["Nhóm tài sản"] || r.assetGroup || r["Loại"] || "Thiết bị chính").trim() || "Thiết bị chính",
+              ownership: String(r["Nguồn"] || r["Nguồn gốc"] || r.ownership || "Công ty").trim() || "Công ty",
+              unit: String(r["Đơn vị tính"] || r.unit || "Cái").trim() || "Cái",
+              department: String(r["Bộ phận"] || r.department || "Vận hành").trim() || "Vận hành",
+              serial: String(r["Serial"] || "").trim(), supplier: String(r["Nhà cung cấp"] || "").trim(),
+              note: String(r["Ghi chú"] || "").trim(),
+              cost: Number(r["Nguyên giá"] || r.cost || 0) || 0,
+              purchaseDate: parseDateValue(r["Ngày mua"] || r.purchaseDate),
+              usefulLifeMonths: Number(r["Thời gian SD"] || r.usefulLifeMonths || 36) || 36,
+              catalogUpdatedAt: nowIso(),
+            };
+            const existing = byCode.get(normalizeText(code));
+            if (existing) {
+              const idx = nextAssets.findIndex(a => a.id === existing.id);
+              nextAssets[idx] = { ...existing, ...patch, id: existing.id, status: existing.status || STATUS.UNUSED, projectId: existing.projectId || null, customFields: existing.customFields || {} };
+              updated += 1;
+            } else {
+              const asset = { id: uid("as"), ...patch, status: STATUS.UNUSED, assignedTo: null, projectId: null, quantity: 0, warranty: false, warrantyEnd: "", customFields: {} };
+              nextAssets.unshift(asset); byCode.set(normalizeText(code), asset); added += 1;
+            }
+          });
+          setData({ ...data, assets: nextAssets, activityLog: logAction(data.activityLog, `Import bảng map danh mục: thêm ${added}, cập nhật ${updated}${skipped ? `, bỏ qua ${skipped} dòng thiếu mã/tên` : ""}`) });
+          notify(`Danh mục đã cập nhật: +${added} mới, ${updated} cập nhật${skipped ? `, ${skipped} bỏ qua` : ""}. Không tạo phiếu nhập.`);
         } else if (kind === "projects") {
           const imported=rows.map(r=>({id:uid("p"),commander:String(r["Chỉ huy trưởng"]||r.commander||""),name:String(r["Tên công trình"]||r.name||""),address:String(r["Địa chỉ"]||r.address||""),workItem:String(r["Hạng mục thi công"]||r.workItem||""),startDate:parseDateValue(r["Ngày bắt đầu"]||r.startDate),endDate:parseDateValue(r["Ngày kết thúc"]||r.endDate)})).filter(x=>x.name.trim());
           setData({...data,projects:[...imported,...data.projects],activityLog:logAction(data.activityLog,`Import ${imported.length} công trình từ Excel`)}); notify(`Đã import ${imported.length} công trình`);
@@ -1355,7 +1433,7 @@ export default function AssetManagementApp() {
               {active === "overview" && <Overview data={data} counts={counts} projectName={projectName} />}
               {active === "catalog" && (
                 <AssetCatalog
-                  assets={filteredAssets} projectName={projectName} onSelect={setSelectedAssetId} selectedAssetId={selectedAssetId}
+                  assets={filteredAssets} warehouse={data.warehouse || []} projectName={projectName} onSelect={setSelectedAssetId} selectedAssetId={selectedAssetId}
                   onAdd={() => setModal({ type: "addAsset" })} customColumns={settings.customColumns} isAdmin={isAdmin} onDelete={deleteAsset}
                   onExportExcel={doExportExcel} onExportPdf={doExportPdf} onDeleteMany={deleteAssets} onImportExcel={(file)=>importExcel(file,"assets")}
                 />
@@ -1713,15 +1791,28 @@ function ExportBar({ onExcel, onPdf }) {
   );
 }
 
-function AssetCatalog({ assets, projectName, onSelect, selectedAssetId, onAdd, onDelete, onDeleteMany, isAdmin, customColumns = [], onExportExcel, onExportPdf, onImportExcel }) {
+function AssetCatalog({ assets, warehouse = [], projectName, onSelect, selectedAssetId, onAdd, onDelete, onDeleteMany, isAdmin, customColumns = [], onExportExcel, onExportPdf, onImportExcel }) {
   const [selected,setSelected]=useState([]);
   const fileRef=useRef(null);
-  const headers = ["Mã quản lý", "Tên tài sản", "ĐVT", "Loại", "Nhóm tài sản", "Công trình", "Nguồn", "Trạng thái", "Nguyên giá", ...customColumns.map((c) => c.label)];
-  const buildRows = () => assets.map((a) => [a.code, a.name, a.unit||"Cái", a.category, a.assetGroup || "", projectName(a.projectId), a.ownership || "Công ty", a.status, a.cost, ...customColumns.map((c) => a.customFields?.[c.key] ?? "")]);
+  const summaryById = useMemo(() => Object.fromEntries(assets.map(a => [a.id, summarizeAssetWarehouse(a.id, warehouse)])), [assets, warehouse]);
+  const headers = ["Mã quản lý", "Tên tài sản", "ĐVT", "Loại", "Nhóm tài sản", "Nguồn", "Tổng nhập", "Tổng xuất", "Tổng tồn", "Giá nhập TB", "Giá trị tồn", "Số kho/CT có tồn", ...customColumns.map((c) => c.label)];
+  const buildRows = () => assets.map((a) => { const m = summaryById[a.id] || summarizeAssetWarehouse(a.id, warehouse); return [a.code, a.name, a.unit||"Cái", a.category, a.assetGroup || "", a.ownership || "Công ty", m.totalIn, m.totalOut, m.stock, Math.round(m.avgInPrice), Math.round(m.stockValue), m.locationCount, ...customColumns.map((c) => a.customFields?.[c.key] ?? "")]; });
   const visibleIds=assets.map(a=>a.id), allSelected=visibleIds.length>0&&visibleIds.every(id=>selected.includes(id));
   const toggleAll=()=>setSelected(allSelected?selected.filter(id=>!visibleIds.includes(id)):[...new Set([...selected,...visibleIds])]);
-  const downloadTemplate=()=>downloadExcelTemplate("Mau_Import_Danh_Muc_Tai_San",["Mã quản lý","Tên tài sản","Đơn vị tính","Loại","Nhóm tài sản","Nguồn","Số lượng","Nguyên giá","Ngày mua","Thời gian SD","Bộ phận","Serial","Nhà cung cấp","Ghi chú"],[["TS-001","Máy khoan mẫu","Cái","TBT","Thiết bị điện","Công ty",1,3500000,"24/08/2026",36,"Vận hành","SN001","NCC A",""]]);
-  return <div className="aa-fade"><div className="flex items-center justify-between mb-4 gap-3"><div><h1 className="aa-display text-xl font-semibold">Danh mục tài sản</h1><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Có thể đổ lô Excel, chọn nhiều dòng và xóa hàng loạt.</div></div><div className="flex items-center gap-2 flex-wrap justify-end"><ExportBar onExcel={() => onExportExcel("danh-muc-tai-san", headers, buildRows())} onPdf={() => onExportPdf("Danh mục tài sản", headers, buildRows())} /><Btn icon={Download} onClick={downloadTemplate}>Tải mẫu</Btn>{isAdmin&&<><input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)onImportExcel?.(f);e.target.value=""}}/><Btn kind="info" icon={UploadCloud} onClick={()=>fileRef.current?.click()}>Đổ Excel</Btn></>}{isAdmin&&selected.length>0&&<Btn kind="danger" icon={Trash2} onClick={()=>{onDeleteMany(selected);setSelected([])}}>Xóa {selected.length} tài sản</Btn>}<Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm mới</Btn></div></div><div className="rounded-lg overflow-x-auto aa-scroll" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}><table className="w-full min-w-[1200px]"><thead><tr><Th><input type="checkbox" checked={allSelected} onChange={toggleAll}/></Th><Th>Mã quản lý</Th><Th>Tên tài sản</Th><Th>ĐVT</Th><Th>Loại</Th><Th>Nhóm tài sản</Th><Th>Công trình</Th><Th>Nguồn</Th><Th>Trạng thái</Th><Th right>Nguyên giá</Th>{customColumns.map((c) => <Th key={c.key}>{c.label}</Th>)}</tr></thead><tbody>{assets.map((a) => <tr key={a.id} className="aa-row cursor-pointer" onClick={() => onSelect(a.id)} style={{ background: selectedAssetId === a.id ? TOKENS.brandSoft : "transparent" }}><Td><input type="checkbox" checked={selected.includes(a.id)} onClick={e=>e.stopPropagation()} onChange={e=>setSelected(e.target.checked?[...selected,a.id]:selected.filter(id=>id!==a.id))}/></Td><Td mono><Tag>{a.code}</Tag></Td><Td>{a.name}</Td><Td>{a.unit||"Cái"}</Td><Td>{a.category}</Td><Td>{a.assetGroup || "—"}</Td><Td>{projectName(a.projectId)}</Td><Td>{a.ownership || "Công ty"}</Td><Td><StatusDot status={a.status} /></Td><Td right mono>{fmtVND(a.cost)}</Td>{customColumns.map((c) => <Td key={c.key} mono={c.type !== "text"}>{c.type === "date" ? fmtDate(a.customFields?.[c.key]) : (a.customFields?.[c.key] || "—")}</Td>)}</tr>)}</tbody></table>{assets.length === 0 && <EmptyState text="Không tìm thấy tài sản phù hợp" sub="Thử từ khoá khác hoặc bỏ bộ lọc." />}</div></div>;
+  const downloadTemplate=()=>downloadExcelTemplate("Mau_Import_Bang_Map_Danh_Muc_Tai_San",["Mã quản lý","Tên tài sản","Đơn vị tính","Loại","Nhóm tài sản","Nguồn","Nguyên giá tham khảo","Ngày mua tham khảo","Thời gian SD","Bộ phận","Serial","Nhà cung cấp","Ghi chú"],[["TS-001","Máy khoan mẫu","Cái","TBT","Thiết bị điện","Công ty",3500000,"24/08/2026",36,"Vận hành","SN001","NCC A",""]]);
+  return <div className="aa-fade">
+    <div className="flex items-center justify-between mb-4 gap-3">
+      <div><h1 className="aa-display text-xl font-semibold">Danh mục tài sản — Bảng map tổng</h1><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Master data để map mã/tên/ĐVT/loại/nhóm. Import danh mục không tạo phiếu nhập; tồn và giá được tổng hợp động từ chứng từ Kho.</div></div>
+      <div className="flex items-center gap-2 flex-wrap justify-end"><ExportBar onExcel={() => onExportExcel("danh-muc-tai-san-map-tong", headers, buildRows())} onPdf={() => onExportPdf("Danh mục tài sản — Bảng map tổng", headers, buildRows())} /><Btn icon={Download} onClick={downloadTemplate}>Tải mẫu</Btn>{isAdmin&&<><input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)onImportExcel?.(f);e.target.value=""}}/><Btn kind="info" icon={UploadCloud} onClick={()=>fileRef.current?.click()}>Đổ Excel</Btn></>}{isAdmin&&selected.length>0&&<Btn kind="danger" icon={Trash2} onClick={()=>{onDeleteMany(selected);setSelected([])}}>Xóa {selected.length} mã</Btn>}<Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm mã mới</Btn></div>
+    </div>
+    <div className="rounded-lg mb-3 px-3 py-2 text-[11.5px]" style={{background:TOKENS.infoSoft,color:TOKENS.info,border:`1px solid ${TOKENS.info}22`}}>
+      <b>Nguyên tắc:</b> Danh mục không làm tăng/giảm tồn. Tổng nhập, tổng xuất, tồn, giá nhập TB và giá trị tồn bên dưới được tính từ phiếu Nhập/Xuất/Chuyển kho thực tế.
+    </div>
+    <div className="rounded-lg overflow-x-auto aa-scroll" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+      <table className="w-full min-w-[1650px]"><thead><tr><Th><input type="checkbox" checked={allSelected} onChange={toggleAll}/></Th><Th>Mã quản lý</Th><Th>Tên tài sản</Th><Th>ĐVT</Th><Th>Loại</Th><Th>Nhóm tài sản</Th><Th>Nguồn</Th><Th right>Tổng nhập</Th><Th right>Tổng xuất</Th><Th right>Tổng tồn</Th><Th right>Giá nhập TB</Th><Th right>Giá trị tồn</Th><Th right>Kho/CT có tồn</Th>{customColumns.map((c) => <Th key={c.key}>{c.label}</Th>)}</tr></thead>
+      <tbody>{assets.map((a) => { const m=summaryById[a.id] || summarizeAssetWarehouse(a.id,warehouse); const locTitle=m.locations.filter(x=>x.quantity>0).map(x=>`${x.name}: ${Number(x.quantity).toLocaleString("vi-VN")} ${a.unit||""}`).join(" | "); return <tr key={a.id} className="aa-row cursor-pointer" onClick={() => onSelect(a.id)} style={{ background: selectedAssetId === a.id ? TOKENS.brandSoft : "transparent" }}><Td><input type="checkbox" checked={selected.includes(a.id)} onClick={e=>e.stopPropagation()} onChange={e=>setSelected(e.target.checked?[...selected,a.id]:selected.filter(id=>id!==a.id))}/></Td><Td mono><Tag>{a.code}</Tag></Td><Td>{a.name}</Td><Td>{a.unit||"Cái"}</Td><Td>{a.category}</Td><Td>{a.assetGroup || "—"}</Td><Td>{a.ownership || "Công ty"}</Td><Td right mono>{Number(m.totalIn).toLocaleString("vi-VN")}</Td><Td right mono>{Number(m.totalOut).toLocaleString("vi-VN")}</Td><Td right mono><b style={{color:m.stock<0?TOKENS.danger:TOKENS.ink}}>{Number(m.stock).toLocaleString("vi-VN")}</b></Td><Td right mono>{fmtVND(Math.round(m.avgInPrice))}</Td><Td right mono>{fmtVND(Math.round(m.stockValue))}</Td><Td right><span title={locTitle || "Chưa có tồn"}>{m.locationCount || 0}</span></Td>{customColumns.map((c) => <Td key={c.key} mono={c.type !== "text"}>{c.type === "date" ? fmtDate(a.customFields?.[c.key]) : (a.customFields?.[c.key] || "—")}</Td>)}</tr>})}</tbody></table>{assets.length === 0 && <EmptyState text="Không tìm thấy mã tài sản phù hợp" sub="Import hoặc thêm mã mới vào bảng map." />}
+    </div>
+  </div>;
 }
 
 function AssetDetail({ asset, data, projectName, isAdmin, onDelete, onClose, onAction }) {
@@ -1798,6 +1889,7 @@ function AssetDetail({ asset, data, projectName, isAdmin, onDelete, onClose, onA
 
         {tab === "thongtin" && (
           <div className="space-y-2.5 text-[13px]">
+            {(() => { const m = summarizeAssetWarehouse(asset.id, data.warehouse || []); return <div className="rounded-md p-3 mb-3" style={{background:TOKENS.infoSoft,border:`1px solid ${TOKENS.info}22`}}><div className="text-[11px] font-semibold mb-2" style={{color:TOKENS.info}}>TỔNG HỢP KHO / CÔNG TRÌNH</div><div className="grid grid-cols-2 gap-2 text-[12px]"><div><span style={{color:TOKENS.muted}}>Tổng tồn</span><div className="aa-mono font-semibold">{Number(m.stock).toLocaleString("vi-VN")} {asset.unit||""}</div></div><div><span style={{color:TOKENS.muted}}>Giá nhập TB</span><div className="aa-mono font-semibold">{fmtVND(Math.round(m.avgInPrice))}</div></div><div><span style={{color:TOKENS.muted}}>Giá trị tồn</span><div className="aa-mono font-semibold">{fmtVND(Math.round(m.stockValue))}</div></div><div><span style={{color:TOKENS.muted}}>Nơi đang có tồn</span><div className="aa-mono font-semibold">{m.locationCount}</div></div></div>{m.locations.filter(x=>x.quantity>0).length>0&&<div className="mt-2 pt-2" style={{borderTop:`1px dashed ${TOKENS.info}55`}}>{m.locations.filter(x=>x.quantity>0).map(x=><div key={x.name} className="flex justify-between text-[11.5px]"><span>{x.name}</span><span className="aa-mono">{Number(x.quantity).toLocaleString("vi-VN")} {asset.unit||""}</span></div>)}</div>}</div> })()}
             {[
               ["Serial", asset.serial], ["Danh mục", asset.category], ["Bộ phận", asset.department],
               ["Người dùng", projectName(asset.projectId)], ["Ngày mua", fmtDate(asset.purchaseDate)],
