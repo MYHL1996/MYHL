@@ -12,7 +12,7 @@ import {
   PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
-const CORE_VERSION = "v20.0.0-edit-voucher-visible";
+const CORE_VERSION = "v21.0.0-report-preview-match";
 
 /* ============================== DESIGN TOKENS ==============================
 Color:
@@ -125,34 +125,119 @@ const OPERATION_LABELS = Object.fromEntries(Object.values(WAREHOUSE_OPERATIONS).
 
 /* ---------- export helpers (Excel + in PDF) ---------- */
 
-function exportExcel(filename, headers, rows, title = "BÁO CÁO") {
-  const generatedAt = `Ngày xuất: ${new Date().toLocaleString("vi-VN")}`;
-  const aoa = [[title], [generatedAt], [], headers, ...rows];
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  if (headers.length > 1) ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: headers.length - 1 } }];
-  ws["!cols"] = headers.map((h, i) => ({ wch: Math.min(40, Math.max(12, String(h).length + 3, ...rows.map((r) => String(r[i] ?? "").length + 2))) }));
-  ws["!rows"] = [{ hpt: 28 }, { hpt: 19 }, { hpt: 8 }, { hpt: 26 }];
-  ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 3, c: 0 }, e: { r: Math.max(3, rows.length + 3), c: Math.max(0, headers.length - 1) } }) };
-  ws["!freeze"] = { xSplit: 0, ySplit: 4, topLeftCell: "A5", activePane: "bottomLeft", state: "frozen" };
-  const border = { top: { style: "thin", color: { rgb: "B42318" } }, bottom: { style: "thin", color: { rgb: "D0D5DD" } }, left: { style: "thin", color: { rgb: "D0D5DD" } }, right: { style: "thin", color: { rgb: "D0D5DD" } } };
-  const range = XLSX.utils.decode_range(ws["!ref"] || "A1:A1");
-  for (let R = range.s.r; R <= range.e.r; ++R) for (let C = range.s.c; C <= range.e.c; ++C) {
-    const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })]; if (!cell) continue;
-    if (R === 0) cell.s = { font: { bold: true, sz: 16, color: { rgb: "B42318" } }, alignment: { horizontal: "center", vertical: "center" } };
-    else if (R === 1) cell.s = { font: { italic: true, sz: 10, color: { rgb: "667085" } }, alignment: { horizontal: "center" } };
-    else if (R === 3) cell.s = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "D71920" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border };
-    else if (R >= 4) cell.s = { border, alignment: { vertical: "top", wrapText: true }, fill: R % 2 ? { fgColor: { rgb: "FFF7F7" } } : undefined };
-  }
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Báo cáo");
-  XLSX.writeFile(wb, `${filename}.xlsx`);
+const REPORT_THEME = {
+  brand: "#D71920",
+  brandSoft: "#FFF7F7",
+  border: "#D0D5DD",
+  text: "#111827",
+  muted: "#667085",
+  paper: "#FFFFFF",
+};
+
+function escapeHtml(v) {
+  return String(v ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
+function reportColumnWidths(headers, rows) {
+  return headers.map((h, i) => {
+    const sample = rows.slice(0, 300).map(r => String(r?.[i] ?? ""));
+    const maxLen = Math.max(String(h ?? "").length, ...sample.map(x => x.length), 8);
+    return Math.max(72, Math.min(250, 8.3 * Math.min(maxLen, 30) + 20));
+  });
+}
+
+function reportCellHtml(value, index, isHeader, widths) {
+  const raw = value == null ? "" : value;
+  const numeric = typeof raw === "number" && Number.isFinite(raw);
+  const style = isHeader
+    ? `width:${widths[index]}px;min-width:${widths[index]}px;background:${REPORT_THEME.brand};color:#fff;border:1px solid ${REPORT_THEME.border};padding:7px 6px;text-align:center;vertical-align:middle;font-weight:700;white-space:normal;`
+    : `width:${widths[index]}px;min-width:${widths[index]}px;border:1px solid ${REPORT_THEME.border};padding:6px 6px;vertical-align:top;white-space:normal;${numeric ? "text-align:right;mso-number-format:'#,##0.00';" : "text-align:left;"}`;
+  return `<${isHeader ? "th" : "td"} style="${style}">${escapeHtml(raw)}</${isHeader ? "th" : "td"}>`;
+}
+
+function buildStyledExcelHtml(filename, title, headers, rows, companyName) {
+  const widths = reportColumnWidths(headers, rows);
+  const colspan = Math.max(1, headers.length);
+  const generatedAt = new Date().toLocaleString("vi-VN");
+  const bodyRows = rows.map((r, ri) =>
+    `<tr style="background:${ri % 2 ? REPORT_THEME.brandSoft : REPORT_THEME.paper};">${headers.map((_, i) => reportCellHtml(r?.[i], i, false, widths)).join("")}</tr>`
+  ).join("");
+
+  return `<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+      xmlns:x="urn:schemas-microsoft-com:office:excel"
+      xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="UTF-8">
+<meta name="ProgId" content="Excel.Sheet">
+<meta name="Generator" content="MYHL Enterprise App">
+<!--[if gte mso 9]><xml>
+<x:ExcelWorkbook>
+  <x:ExcelWorksheets>
+    <x:ExcelWorksheet>
+      <x:Name>Báo cáo</x:Name>
+      <x:WorksheetOptions>
+        <x:Selected/>
+        <x:FreezePanes/>
+        <x:FrozenNoSplit/>
+        <x:SplitHorizontal>4</x:SplitHorizontal>
+        <x:TopRowBottomPane>4</x:TopRowBottomPane>
+        <x:ActivePane>2</x:ActivePane>
+        <x:ProtectContents>False</x:ProtectContents>
+        <x:ProtectObjects>False</x:ProtectObjects>
+        <x:ProtectScenarios>False</x:ProtectScenarios>
+      </x:WorksheetOptions>
+    </x:ExcelWorksheet>
+  </x:ExcelWorksheets>
+</x:ExcelWorkbook>
+</xml><![endif]-->
+<style>
+  @page { size: landscape; margin: 0.35in; }
+  body { font-family: Arial, "Segoe UI", sans-serif; color:${REPORT_THEME.text}; background:#fff; }
+  table { border-collapse: collapse; table-layout: fixed; width: auto; }
+  .company { color:${REPORT_THEME.brand}; font-size:11pt; font-weight:800; text-transform:uppercase; padding:3px 2px 5px; }
+  .title { font-size:16pt; font-weight:800; text-align:center; text-transform:uppercase; padding:7px 3px 4px; }
+  .generated { color:${REPORT_THEME.muted}; font-size:9pt; text-align:center; padding:2px 3px 10px; }
+  .footer { color:${REPORT_THEME.muted}; font-size:8pt; padding-top:8px; }
+</style>
+</head>
+<body>
+<table>
+  <colgroup>${widths.map(w => `<col style="width:${w}px">`).join("")}</colgroup>
+  <tr><td class="company" colspan="${colspan}">${escapeHtml(companyName || "MYHL - Quản lý tài sản")}</td></tr>
+  <tr><td class="title" colspan="${colspan}">${escapeHtml(title || filename || "BÁO CÁO")}</td></tr>
+  <tr><td class="generated" colspan="${colspan}">Ngày xuất: ${escapeHtml(generatedAt)}</td></tr>
+  <tr><td colspan="${colspan}" style="height:6px;border:0"></td></tr>
+  <tr>${headers.map((h, i) => reportCellHtml(h, i, true, widths)).join("")}</tr>
+  ${bodyRows}
+  <tr><td class="footer" colspan="${colspan}">MYHL - Hệ thống quản lý tài sản &nbsp;&nbsp;•&nbsp;&nbsp; Tổng số dòng: ${rows.length}</td></tr>
+</table>
+</body>
+</html>`;
+}
+
+function exportExcel(filename, headers, rows, title = "BÁO CÁO", companyName = "MYHL - Quản lý tài sản") {
+  // Báo cáo có định dạng dùng HTML Workbook tương thích Excel.
+  // Lý do: SheetJS Community (xlsx) đọc/ghi dữ liệu tốt nhưng không đảm bảo ghi cell style.
+  // Cách này không thêm dependency mới và giữ màu, viền, tiêu đề, căn cột giống phần Preview.
+  const html = buildStyledExcelHtml(filename, title, headers, rows, companyName);
+  const blob = new Blob(["\ufeff", html], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${filename}.xls`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 500);
+}
 
 async function exportStyledExcel(filename, title, headers, rows, companyName = "MYHL - Quản lý tài sản") {
-  // Xuất Excel dùng thư viện XLSX đã có sẵn trong project.
-  // Trình thiết kế báo cáo vẫn quyết định chính xác cột và thứ tự trước khi gọi hàm này.
-  exportExcel(filename, headers, rows, title || companyName || "BÁO CÁO");
+  exportExcel(filename, headers, rows, title || companyName || "BÁO CÁO", companyName);
 }
 
 function downloadExcelTemplate(filename, headers, sampleRows = []) {
@@ -1705,13 +1790,14 @@ function ReportDesigner({ job, companyName, onClose, onExcel, onPrint }) {
   const rows=job.rows.map(r=>selected.map(i=>r[i]));
   const run=()=>{if(!selected.length)return alert("Hãy chọn ít nhất 1 cột báo cáo."); const out={filename:job.filename,title:job.title,headers:chosen,rows}; job.mode==="excel"?onExcel(out):onPrint({...out,rows:rows.map(r=>r.map(c=>c==null?"":String(c)))})};
   return <Modal title="Thiết kế báo cáo trước khi xuất" onClose={onClose} wide>
+    <div className="mb-4 rounded-md px-3 py-2 text-[11.5px]" style={{background:TOKENS.infoSoft,color:TOKENS.info,border:`1px solid ${TOKENS.info}22`}}><b>Preview = File Excel:</b> màu tiêu đề, viền bảng, nền xen kẽ, thứ tự cột và căn số dùng chung một bộ định dạng. Báo cáo Excel tải về ở định dạng <b>.xls</b> để giữ style mà không cần thêm thư viện mới.</div>
     <div className="grid grid-cols-[1fr_1.15fr] gap-5">
       <div><div className="flex items-center justify-between mb-2"><div><div className="text-[13px] font-semibold">Cột thông tin</div><div className="text-[11px]" style={{color:TOKENS.muted}}>Chọn cột và sắp xếp thứ tự xuất.</div></div><button className="text-[11px] font-semibold" style={{color:TOKENS.brand}} onClick={()=>setSelected(job.headers.map((_,i)=>i))}>Mẫu mặc định</button></div>
         <div className="rounded-lg overflow-hidden" style={{border:`1px solid ${TOKENS.border}`}}>{job.headers.map((h,i)=>{const pos=selected.indexOf(i),on=pos>=0;return <div key={`${h}-${i}`} className="flex items-center gap-2 px-3 py-2" style={{borderBottom:`1px solid ${TOKENS.border}`,background:on?TOKENS.brandSoft:"#fff"}}><input type="checkbox" checked={on} onChange={()=>toggle(i)}/><span className="flex-1 text-[12px]">{h}</span>{on&&<><span className="text-[10px] aa-mono" style={{color:TOKENS.muted}}>#{pos+1}</span><button disabled={pos===0} onClick={()=>move(pos,-1)} className="p-1 disabled:opacity-25"><ArrowUp size={14}/></button><button disabled={pos===selected.length-1} onClick={()=>move(pos,1)} className="p-1 disabled:opacity-25"><ArrowDown size={14}/></button></>}</div>})}</div>
       </div>
-      <div><div className="flex items-center gap-2 mb-2"><SlidersHorizontal size={15}/><div className="text-[13px] font-semibold">Xem trước mẫu báo cáo</div></div><div className="rounded-lg bg-white p-4 overflow-auto max-h-[520px]" style={{border:`1px solid ${TOKENS.border}`}}><div className="text-[10px] font-bold" style={{color:TOKENS.brand}}>{String(companyName||"MYHL").toUpperCase()}</div><div className="text-center font-extrabold text-[15px] uppercase my-2">{job.title}</div><div className="text-center text-[9px] mb-3" style={{color:TOKENS.muted}}>Ngày xuất: {new Date().toLocaleString("vi-VN")}</div><table className="w-full border-collapse text-[8px]"><thead><tr>{chosen.map((h,i)=><th key={i} className="p-1 text-white text-center" style={{background:TOKENS.brand,border:"1px solid #D0D5DD"}}>{h}</th>)}</tr></thead><tbody>{rows.slice(0,6).map((r,ri)=><tr key={ri}>{r.map((c,ci)=><td key={ci} className="p-1" style={{border:"1px solid #D0D5DD",background:ri%2?"#FFF7F7":"#fff"}}>{String(c??"")}</td>)}</tr>)}</tbody></table><div className="text-[8px] mt-2" style={{color:TOKENS.muted}}>Xem trước 6/{rows.length} dòng • File chính thức có kẻ bảng, tiêu đề, bộ lọc và căn cột.</div></div></div>
+      <div><div className="flex items-center gap-2 mb-2"><SlidersHorizontal size={15}/><div className="text-[13px] font-semibold">Xem trước mẫu báo cáo</div></div><div className="rounded-lg bg-white p-4 overflow-auto max-h-[520px]" style={{border:`1px solid ${TOKENS.border}`}}><div className="text-[10px] font-extrabold uppercase" style={{color:REPORT_THEME.brand}}>{String(companyName||"MYHL").toUpperCase()}</div><div className="text-center font-extrabold text-[15px] uppercase mt-1 mb-1">{job.title}</div><div className="text-center text-[9px] mb-3" style={{color:REPORT_THEME.muted}}>Ngày xuất: {new Date().toLocaleString("vi-VN")}</div><table className="border-collapse text-[8px]" style={{tableLayout:"fixed",width:"max-content",minWidth:"100%"}}><thead><tr>{chosen.map((h,i)=><th key={i} className="p-1 text-white text-center font-bold" style={{background:REPORT_THEME.brand,border:`1px solid ${REPORT_THEME.border}`,minWidth:Math.max(72,Math.min(180,String(h||"").length*8+28))}}>{h}</th>)}</tr></thead><tbody>{rows.slice(0,6).map((r,ri)=><tr key={ri} style={{background:ri%2?REPORT_THEME.brandSoft:REPORT_THEME.paper}}>{r.map((c,ci)=><td key={ci} className="p-1 align-top" style={{border:`1px solid ${REPORT_THEME.border}`,textAlign:typeof c==="number"?"right":"left",whiteSpace:"normal"}}>{String(c??"")}</td>)}</tr>)}</tbody></table><div className="text-[8px] mt-2" style={{color:REPORT_THEME.muted}}>Xem trước 6/{rows.length} dòng • File Excel dùng chính màu, viền, tiêu đề và thứ tự cột của Preview này.</div></div></div>
     </div>
-    <div className="flex justify-between items-center mt-5 pt-4" style={{borderTop:`1px solid ${TOKENS.border}`}}><div className="text-[11px]" style={{color:TOKENS.muted}}>Đã chọn <b>{selected.length}/{job.headers.length}</b> cột.</div><div className="flex gap-2"><Btn onClick={onClose}>Hủy</Btn><Btn kind="primary" icon={job.mode==="excel"?FileDown:Printer} onClick={run}>{job.mode==="excel"?"Xuất Excel theo mẫu":"Xuất PDF theo mẫu"}</Btn></div></div>
+    <div className="flex justify-between items-center mt-5 pt-4" style={{borderTop:`1px solid ${TOKENS.border}`}}><div className="text-[11px]" style={{color:TOKENS.muted}}>Đã chọn <b>{selected.length}/{job.headers.length}</b> cột.</div><div className="flex gap-2"><Btn onClick={onClose}>Hủy</Btn><Btn kind="primary" icon={job.mode==="excel"?FileDown:Printer} onClick={run}>{job.mode==="excel"?"Xuất Excel đúng mẫu":"Xuất PDF theo mẫu"}</Btn></div></div>
   </Modal>
 }
 
