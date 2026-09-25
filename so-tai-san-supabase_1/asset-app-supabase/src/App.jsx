@@ -12,7 +12,7 @@ import {
   PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
-const CORE_VERSION = "v24.0.0-final-linked-stock-docs-repair";
+const CORE_VERSION = "v25.0.0-final-linked-stock-docs-repair";
 
 /* ============================== DESIGN TOKENS ==============================
 Color:
@@ -1377,6 +1377,21 @@ export default function AssetManagementApp() {
     setData({...data,repairs:data.repairs.map(r=>r.id===repairId?next:r),activityLog:logAction(data.activityLog,`Cập nhật hồ sơ sửa chữa ${assetsById[old.assetId]?.code||old.externalCode||old.externalName||repairId}`)});notify("Đã cập nhật hồ sơ sửa chữa");return true;
   };
 
+  const updateRepairHistory = (repairId, form) => {
+    const old=data.repairs.find(r=>r.id===repairId); if(!old)return false;
+    const chosen=form.assetId?assetsById[form.assetId]:null;
+    const next={...old,assetId:chosen?.id||null,externalCode:chosen?"":String(form.externalCode||old.externalCode||"").trim(),externalName:chosen?"":String(form.externalName||old.externalName||"").trim(),ownerCompany:form.ownerCompany??old.ownerCompany,serviceLocation:form.serviceLocation??old.serviceLocation,description:form.description??old.description,vendor:form.vendor??old.vendor,cost:Math.max(0,Number(form.cost??old.cost??0)),date:parseDateValue(form.date||old.date),completeDate:form.completeDate?parseDateValue(form.completeDate):old.completeDate,status:form.status||old.status,result:form.result??old.result,returnVoucherNo:form.returnVoucherNo??old.returnVoucherNo,returnLocation:form.returnLocation??old.returnLocation};
+    if(!next.assetId&&!next.externalName){notify("Vui lòng chọn tài sản hoặc nhập tên thiết bị");return false;}
+    setData({...data,repairs:data.repairs.map(r=>r.id===repairId?next:r),activityLog:logAction(data.activityLog,`Điều chỉnh lịch sử sửa chữa ${chosen?.code||next.externalCode||next.externalName}`)});notify("Đã cập nhật lịch sử sửa chữa");return true;
+  };
+
+  const deleteRepairHistory = (repairId) => {
+    const rp=data.repairs.find(r=>r.id===repairId); if(!rp)return;
+    const label=assetsById[rp.assetId]?.code||rp.externalCode||rp.externalName||repairId;
+    if(!window.confirm(`Xóa hồ sơ sửa chữa ${label}?\n\nPhiếu nhập/xuất kho đã phát sinh sẽ KHÔNG bị xóa để tránh làm sai tồn kho.`))return;
+    setData({...data,repairs:data.repairs.filter(r=>r.id!==repairId),activityLog:logAction(data.activityLog,`Xóa lịch sử sửa chữa ${label}`)});notify("Đã xóa hồ sơ khỏi lịch sử sửa chữa");
+  };
+
   const completeRepair = (repairId) => setModal({ type:"repairComplete", repairId });
 
   const finalizeRepair = (repairId, form) => {
@@ -1712,7 +1727,7 @@ export default function AssetManagementApp() {
               {active === "byProject" && <ByProject data={data} projectName={projectName} onSelect={(id) => { setActive("catalog"); setSelectedAssetId(id); }} />}
               {active === "depreciation" && <Depreciation assets={data.assets} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "repair" && <RepairView repairs={data.repairs.filter((r) => r.status === "Đang sửa")} assetsById={assetsById} onComplete={completeRepair} onEdit={repairId=>setModal({type:"repairEdit",repairId})} onAdd={()=>setModal({type:"repairDirect"})} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
-              {active === "repairHistory" && <RepairHistory repairs={data.repairs} assetsById={assetsById} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
+              {active === "repairHistory" && <RepairHistory repairs={data.repairs} assetsById={assetsById} assets={data.assets} onAdd={()=>setModal({type:"repairDirect"})} onEdit={repairId=>setModal({type:"repairHistoryEdit",repairId})} onDelete={deleteRepairHistory} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "liquidation" && <LiquidationView liquidations={data.liquidations} assetsById={assetsById} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "minutes" && <MinutesView minutes={data.minutes} assetsById={assetsById} warehouse={data.warehouse||[]} repairs={data.repairs||[]} projects={data.projects||[]} onAdd={()=>setModal({type:"documentAdd"})} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "transactions" && <TransactionsView transactions={data.transactions} assetsById={assetsById} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
@@ -1822,6 +1837,7 @@ export default function AssetManagementApp() {
           onSubmit={f=>{if(addWarehouseTx(f, modal.type === "warehouseEdit" ? modal.editMeta : null))setModal(null)}}
         />}
         {modal?.type === "repairEdit" && <RepairEditModal repair={data.repairs.find(r=>r.id===modal.repairId)} onClose={()=>setModal(null)} onSubmit={f=>{if(updateRepair(modal.repairId,f))setModal(null)}} />}
+        {modal?.type === "repairHistoryEdit" && <RepairHistoryEditModal repair={data.repairs.find(r=>r.id===modal.repairId)} assets={data.assets} onClose={()=>setModal(null)} onSubmit={f=>{if(updateRepairHistory(modal.repairId,f))setModal(null)}} />}
         {modal?.type === "repairDirect" && <DirectRepairModal assets={data.assets} projects={data.projects} onClose={()=>setModal(null)} onSubmit={f=>{if(createDirectRepair(f))setModal(null)}} />}
         {modal?.type === "documentAdd" && <DocumentModal assets={data.assets} projects={data.projects} onClose={()=>setModal(null)} onSubmit={f=>{if(createDocument(f))setModal(null)}} />}
         {modal?.type === "repairComplete" && <RepairCompleteModal repair={data.repairs.find(r=>r.id===modal.repairId)} asset={assetsById[data.repairs.find(r=>r.id===modal.repairId)?.assetId]} projects={data.projects} onClose={()=>setModal(null)} onSubmit={f=>{if(finalizeRepair(modal.repairId,f))setModal(null)}} />}
@@ -2307,36 +2323,11 @@ function RepairView({ repairs, assetsById, onComplete, onEdit, onAdd, onExportEx
   return <div className="aa-fade"><div className="flex items-center justify-between mb-4"><div><h1 className="aa-display text-xl font-semibold">Sửa chữa — đang xử lý</h1><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Theo dõi cả tài sản TMC và máy/thiết bị ngoài hệ thống.</div></div><div className="flex gap-2"><ExportBar onExcel={()=>onExportExcel("sua-chua-dang-xu-ly",headers,rows)} onPdf={()=>onExportPdf("Sửa chữa — đang xử lý",headers,rows)}/><Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm sửa chữa</Btn></div></div>{repairs.length===0?<div className="rounded-lg" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><EmptyState text="Không có hồ sơ sửa chữa đang mở" sub="Bấm Thêm sửa chữa hoặc xuất đi sửa chữa từ Kho/Công trình."/></div>:<div className="grid grid-cols-2 gap-3">{repairs.map(r=>{const a=info(r);return <div key={r.id} className="rounded-lg p-4" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><div className="flex justify-between items-start"><div><Tag>{a.code}</Tag><div className="text-[13px] font-medium mt-1">{a.name}</div>{r.ownerCompany&&<div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Đơn vị sở hữu: {r.ownerCompany}</div>}</div><span className="text-[11px] px-2 py-0.5 rounded-full" style={{background:TOKENS.goldSoft,color:TOKENS.gold}}>{r.status}</span></div><div className="text-[12.5px] mt-2" style={{color:TOKENS.muted}}>{r.description}</div><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Nguồn: <b>{r.warehouseVoucherNo?`Phiếu xuất ${r.warehouseVoucherNo}`:"Thêm trực tiếp"}</b> · Nơi xuất/đang phục vụ: <b>{r.sourceLocation||r.serviceLocation||"—"}</b></div><div className="flex justify-between items-center mt-3"><span className="aa-mono text-[12px]">{fmtDate(r.date)} · {fmtVND(r.cost)}</span><div className="flex gap-2"><Btn small icon={Pencil} onClick={()=>onEdit(r.id)}>Cập nhật</Btn><Btn small kind="primary" onClick={()=>onComplete(r.id)}>Hoàn thành sửa chữa</Btn></div></div></div>})}</div>}</div>;
 }
 
-function RepairHistory({ repairs, assetsById, onExportExcel, onExportPdf }) {
+function RepairHistory({ repairs, assetsById, assets=[], onAdd, onEdit, onDelete, onExportExcel, onExportPdf }) {
+  const info=r=>assetsById[r.assetId]||{code:r.externalCode||"NGOAI-HT",name:r.externalName||"Thiết bị ngoài hệ thống"};
   const headers = ["Mã quản lý", "Tài sản", "PX sửa chữa", "Nơi xuất", "Mô tả", "Ngày gửi", "Ngày hoàn thành", "Kết quả", "PN thu hồi", "Nơi nhận", "Chi phí", "Trạng thái"];
-  const buildRows = () => repairs.map((r) => {
-    const a = assetsById[r.assetId] || {code:r.externalCode||"NGOAI-HT",name:r.externalName||"Thiết bị ngoài hệ thống"};
-    return [a?.code, a?.name, r.warehouseVoucherNo||"", r.sourceLocation||r.serviceLocation||"", r.description, fmtDate(r.date), fmtDate(r.completeDate), r.result||"", r.returnVoucherNo||"", r.returnLocation||r.ownerCompany||"", r.cost, r.status];
-  });
-  return (
-    <div className="aa-fade">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="aa-display text-xl font-semibold">Lịch sử sửa chữa</h1>
-        <ExportBar onExcel={() => onExportExcel("lich-su-sua-chua", headers, buildRows())} onPdf={() => onExportPdf("Lịch sử sửa chữa", headers, buildRows())} />
-      </div>
-      <div className="rounded-lg overflow-hidden" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
-        <table className="w-full min-w-[1500px]">
-          <thead><tr>{headers.map(h=><Th key={h}>{h}</Th>)}</tr></thead>
-          <tbody>
-            {repairs.map((r) => {
-              const a = assetsById[r.assetId];
-              return (
-                <tr key={r.id} className="aa-row">
-                  <Td mono><Tag>{a?.code}</Tag></Td><Td>{a?.name}</Td><Td>{r.warehouseVoucherNo||"—"}</Td><Td>{r.sourceLocation||"—"}</Td><Td>{r.description}</Td><Td>{fmtDate(r.date)}</Td><Td>{fmtDate(r.completeDate)}</Td><Td>{r.result||"—"}</Td><Td>{r.returnVoucherNo||"—"}</Td><Td>{r.returnLocation||"—"}</Td><Td right mono>{fmtVND(r.cost)}</Td><Td><span style={{ color: r.status === "Hoàn thành" ? TOKENS.brand : TOKENS.gold }}>{r.status}</span></Td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        {repairs.length === 0 && <EmptyState text="Chưa có lịch sử sửa chữa" />}
-      </div>
-    </div>
-  );
+  const buildRows = () => repairs.map((r) => { const a=info(r); return [a.code||"",a.name||"",r.warehouseVoucherNo||"",r.sourceLocation||r.serviceLocation||"",r.description||"",fmtDate(r.date),fmtDate(r.completeDate),r.result||"",r.returnVoucherNo||"",r.returnLocation||r.ownerCompany||"",Number(r.cost||0),r.status||""]; });
+  return <div className="aa-fade"><div className="flex items-center justify-between mb-4"><div><h1 className="aa-display text-xl font-semibold">Lịch sử sửa chữa</h1><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Cho phép thêm, chỉnh sửa và xóa hồ sơ khi cần điều chỉnh sai mã vật tư/thiết bị. Việc sửa lịch sử không tự ý thay đổi số lượng tồn kho.</div></div><div className="flex gap-2"><ExportBar onExcel={()=>onExportExcel("lich-su-sua-chua",headers,buildRows())} onPdf={()=>onExportPdf("Lịch sử sửa chữa",headers,buildRows())}/><Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm mới</Btn></div></div><div className="rounded-lg overflow-auto" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><table className="w-full min-w-[1650px]"><thead><tr>{headers.map(h=><Th key={h}>{h}</Th>)}<Th>Thao tác</Th></tr></thead><tbody>{repairs.map(r=>{const a=info(r);return <tr key={r.id} className="aa-row"><Td mono><Tag>{a.code||"—"}</Tag></Td><Td>{a.name||"—"}</Td><Td>{r.warehouseVoucherNo||"—"}</Td><Td>{r.sourceLocation||r.serviceLocation||"—"}</Td><Td>{r.description||"—"}</Td><Td>{fmtDate(r.date)}</Td><Td>{fmtDate(r.completeDate)}</Td><Td>{r.result||"—"}</Td><Td>{r.returnVoucherNo||"—"}</Td><Td>{r.returnLocation||r.ownerCompany||"—"}</Td><Td right mono>{fmtVND(r.cost)}</Td><Td><span style={{color:r.status==="Hoàn thành"?TOKENS.brand:TOKENS.gold}}>{r.status}</span></Td><Td><div className="flex gap-2"><Btn small icon={Pencil} onClick={()=>onEdit(r.id)}>Sửa</Btn><Btn small kind="danger" icon={Trash2} onClick={()=>onDelete(r.id)}>Xóa</Btn></div></Td></tr>})}</tbody></table>{repairs.length===0&&<EmptyState text="Chưa có lịch sử sửa chữa"/>}</div></div>;
 }
 
 /* ============================== LIQUIDATION ============================== */
@@ -2385,7 +2376,22 @@ function MinutesView({ minutes, assetsById, warehouse=[], repairs=[], projects=[
   const projectMap=Object.fromEntries((projects||[]).map(p=>[p.id,p.name]));
   const headers=["Loại tài liệu","Tên file","Nguồn","Số phiếu","Công trình/Kho","Tài sản","Ngày","Nội dung"];
   const rows=unique.map(d=>[d.docType,d.name,d.source,d.voucherNo,projectMap[d.projectId]||"",assetsById[d.assetId]?.code||"",fmtDate(d.date),d.content||""]);
-  const open=d=>{if(!d?.dataUrl)return;const previewable=/^(image\/|application\/pdf)/i.test(d.type||"")||/\.(jpe?g|png|pdf)$/i.test(d.name||"");const a=document.createElement("a");a.href=d.dataUrl;if(previewable){a.target="_blank";a.rel="noopener noreferrer";}else a.download=d.name||"tai-lieu";document.body.appendChild(a);a.click();a.remove();};
+  const open=d=>{
+    if(!d?.dataUrl){alert("File không còn dữ liệu để xem. Vui lòng tải lại file nguồn.");return;}
+    const previewable=/^(image\/|application\/pdf)/i.test(d.type||"")||/\.(jpe?g|png|pdf)$/i.test(d.name||"");
+    if(!previewable){download(d);return;}
+    try{
+      const parts=String(d.dataUrl).split(","); const meta=parts[0]||""; const payload=parts.slice(1).join(",");
+      const mime=(meta.match(/data:([^;]+)/i)||[])[1]||d.type||"application/octet-stream";
+      let bytes;
+      if(/;base64/i.test(meta)){const bin=atob(payload);bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);}
+      else{const txt=decodeURIComponent(payload);bytes=new TextEncoder().encode(txt);}
+      const url=URL.createObjectURL(new Blob([bytes],{type:mime}));
+      const win=window.open(url,"_blank","noopener,noreferrer");
+      if(!win){const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener noreferrer";document.body.appendChild(a);a.click();a.remove();}
+      window.setTimeout(()=>URL.revokeObjectURL(url),60000);
+    }catch(err){console.error(err);download(d);}
+  };
   const download=d=>{if(!d?.dataUrl)return;const a=document.createElement("a");a.href=d.dataUrl;a.download=d.name||"tai-lieu";document.body.appendChild(a);a.click();a.remove();};
   return <div className="aa-fade"><div className="flex items-center justify-between mb-4"><div><h1 className="aa-display text-xl font-semibold">Biên bản / Tài liệu</h1><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Tự động tập hợp file từ Phiếu nhập, Phiếu xuất và Sửa chữa; đồng thời cho phép thêm tài liệu độc lập.</div></div><div className="flex gap-2"><ExportBar onExcel={()=>onExportExcel("bien-ban-tai-lieu",headers,rows)} onPdf={()=>onExportPdf("Biên bản / Tài liệu",headers,rows)}/><Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm tài liệu</Btn></div></div><div className="rounded-lg overflow-auto" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><table className="w-full min-w-[1250px]"><thead><tr>{headers.map(h=><Th key={h}>{h}</Th>)}<Th>Thao tác</Th></tr></thead><tbody>{unique.map(d=><tr key={d.docId} className="aa-row"><Td>{d.docType}</Td><Td>{d.name}</Td><Td>{d.source}</Td><Td mono>{d.voucherNo||"—"}</Td><Td>{projectMap[d.projectId]||"—"}</Td><Td mono>{assetsById[d.assetId]?.code||"—"}</Td><Td>{fmtDate(d.date)}</Td><Td>{d.content||"—"}</Td><Td><div className="flex gap-2"><button type="button" onClick={()=>open(d)} style={{color:TOKENS.info}}>Xem/Mở</button><button type="button" onClick={()=>download(d)}>Tải</button></div></Td></tr>)}</tbody></table>{unique.length===0&&<EmptyState text="Chưa có tài liệu nào" sub="Bấm Thêm tài liệu hoặc đính kèm file trong Phiếu nhập / Phiếu xuất / Sửa chữa."/>}</div></div>;
 }
@@ -2614,6 +2620,13 @@ function RepairCompleteModal({ repair, asset, projects, onClose, onSubmit }){
 function RepairEditModal({repair,onClose,onSubmit}){
   const [f,setF]=useState({description:repair?.description||"",vendor:repair?.vendor||"",cost:Number(repair?.cost||0),ownerCompany:repair?.ownerCompany||"",serviceLocation:repair?.serviceLocation||"",attachments:Array.isArray(repair?.attachments)?repair.attachments:[]});const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
   return <Modal title="Cập nhật hồ sơ sửa chữa" onClose={onClose} wide><div className="grid grid-cols-2 gap-3"><Field label="Đơn vị/chủ sở hữu"><input className={inputCls} style={inputStyle} value={f.ownerCompany} onChange={set("ownerCompany")}/></Field><Field label="Máy/Công trình đang phục vụ"><input className={inputCls} style={inputStyle} value={f.serviceLocation} onChange={set("serviceLocation")}/></Field><Field label="Đơn vị sửa chữa"><input className={inputCls} style={inputStyle} value={f.vendor} onChange={set("vendor")}/></Field><Field label="Chi phí sửa chữa"><input type="number" min="0" className={inputCls} style={inputStyle} value={f.cost} onChange={set("cost")}/></Field></div><Field label="Tình trạng / nội dung sửa"><textarea rows={3} className={inputCls} style={inputStyle} value={f.description} onChange={set("description")}/></Field><Field label="Chứng từ"><AttachmentPicker value={f.attachments} onChange={attachments=>setF(p=>({...p,attachments}))}/></Field><div className="flex justify-end gap-2 mt-3"><Btn onClick={onClose}>Hủy</Btn><Btn kind="primary" icon={Save} onClick={()=>onSubmit(f)}>Lưu cập nhật</Btn></div></Modal>;
+}
+
+function RepairHistoryEditModal({ repair, assets, onClose, onSubmit }) {
+  const internal=!!repair?.assetId;
+  const [f,setF]=useState({assetId:repair?.assetId||"",externalCode:repair?.externalCode||"",externalName:repair?.externalName||"",ownerCompany:repair?.ownerCompany||"",serviceLocation:repair?.serviceLocation||"",date:repair?.date||nowIso().slice(0,10),completeDate:repair?.completeDate||"",description:repair?.description||"",vendor:repair?.vendor||"",cost:Number(repair?.cost||0),status:repair?.status||"Đang sửa",result:repair?.result||"",returnVoucherNo:repair?.returnVoucherNo||"",returnLocation:repair?.returnLocation||""});
+  const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  return <Modal title="Điều chỉnh lịch sử sửa chữa" onClose={onClose} wide><div className="rounded-md p-3 mb-3 text-[12px]" style={{background:TOKENS.goldSoft,color:TOKENS.gold}}>Dùng khi ghi sai mã vật tư/thiết bị hoặc thông tin hồ sơ. Thao tác này chỉ sửa hồ sơ lịch sử, không tự thay đổi số lượng tồn của các phiếu kho đã phát sinh.</div><Field label="Tài sản trong danh mục"><select className={inputCls} style={inputStyle} value={f.assetId} onChange={set("assetId")}><option value="">Thiết bị ngoài hệ thống / không chọn mã</option>{assets.map(a=><option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}</select></Field>{!f.assetId&&<div className="grid grid-cols-2 gap-3"><Field label="Mã/Serial thiết bị"><input className={inputCls} style={inputStyle} value={f.externalCode} onChange={set("externalCode")}/></Field><Field label="Tên thiết bị"><input className={inputCls} style={inputStyle} value={f.externalName} onChange={set("externalName")}/></Field></div>}<div className="grid grid-cols-2 gap-3"><Field label="Ngày gửi sửa"><input type="date" className={inputCls} style={inputStyle} value={f.date} onChange={set("date")}/></Field><Field label="Ngày hoàn thành"><input type="date" className={inputCls} style={inputStyle} value={f.completeDate} onChange={set("completeDate")}/></Field><Field label="Đơn vị/chủ sở hữu"><input className={inputCls} style={inputStyle} value={f.ownerCompany} onChange={set("ownerCompany")}/></Field><Field label="Máy/Công trình phục vụ"><input className={inputCls} style={inputStyle} value={f.serviceLocation} onChange={set("serviceLocation")}/></Field><Field label="Đơn vị sửa chữa"><input className={inputCls} style={inputStyle} value={f.vendor} onChange={set("vendor")}/></Field><Field label="Chi phí sửa chữa"><input type="number" min="0" className={inputCls} style={inputStyle} value={f.cost} onChange={set("cost")}/></Field><Field label="Trạng thái"><select className={inputCls} style={inputStyle} value={f.status} onChange={set("status")}><option>Đang sửa</option><option>Hoàn thành</option></select></Field><Field label="Kết quả"><input className={inputCls} style={inputStyle} value={f.result} onChange={set("result")} placeholder="Nhập thu hồi / Thanh lý / Trả chủ sở hữu..."/></Field><Field label="Phiếu nhập thu hồi"><input className={inputCls} style={inputStyle} value={f.returnVoucherNo} onChange={set("returnVoucherNo")}/></Field><Field label="Nơi nhận"><input className={inputCls} style={inputStyle} value={f.returnLocation} onChange={set("returnLocation")}/></Field></div><Field label="Tình trạng / nội dung sửa"><textarea rows={3} className={inputCls} style={inputStyle} value={f.description} onChange={set("description")}/></Field><div className="flex justify-end gap-2 mt-3"><Btn onClick={onClose}>Hủy</Btn><Btn kind="primary" icon={Save} onClick={()=>onSubmit(f)}>Lưu điều chỉnh</Btn></div></Modal>;
 }
 
 function DirectRepairModal({assets=[],projects=[],onClose,onSubmit}){
