@@ -12,10 +12,7 @@ import {
   PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
-const CORE_VERSION = "v26.0.0-final-draft-status-focus-fix";
-const WAREHOUSE_DRAFTS_KEY = "myhl_warehouse_drafts_v26";
-const loadWarehouseDrafts = () => { try { const x=JSON.parse(localStorage.getItem(WAREHOUSE_DRAFTS_KEY)||"[]"); return Array.isArray(x)?x:[]; } catch { return []; } };
-const saveWarehouseDrafts = (rows) => { try { localStorage.setItem(WAREHOUSE_DRAFTS_KEY, JSON.stringify(rows)); window.dispatchEvent(new CustomEvent("myhl:drafts-changed")); } catch {} };
+const CORE_VERSION = "v27.0.0-date-entry-fix";
 
 /* ============================== DESIGN TOKENS ==============================
 Color:
@@ -271,7 +268,7 @@ const NAV = [
     { id: "assetCategories", label: "Danh mục / loại tài sản", icon: Boxes },
     { id: "departments", label: "Bộ phận / đơn vị", icon: Users2 },
     { id: "suppliers", label: "Danh mục nhà cung cấp", icon: Users2 },
-    { id: "projects", label: "Công trình / Kho", icon: Building2, badge: "projects" },
+    { id: "projects", label: "Công trình", icon: Building2, badge: "projects" },
     { id: "activityLog", label: "Nhật ký thao tác", icon: ClipboardList },
     { id: "settings", label: "Cài đặt", icon: SettingsIcon, adminOnly: true },
   ]},
@@ -319,20 +316,42 @@ const parseOperationType = (raw, type) => {
   const found = ops.find(o => normalizeText(o.label).includes(q) || q.includes(normalizeText(o.label)));
   return found?.id || (type === "nhap" ? "mua_moi" : "su_dung_cong_trinh");
 };
-const parseDateValue = (v) => {
-  if (v == null || v === "") return nowIso().slice(0,10);
+const isValidYmd = (ymd) => {
+  const m=String(ymd||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m) return false;
+  const y=Number(m[1]),mo=Number(m[2]),d=Number(m[3]);
+  if(y<1900||y>2100||mo<1||mo>12||d<1||d>31) return false;
+  const dt=new Date(Date.UTC(y,mo-1,d));
+  return dt.getUTCFullYear()===y&&dt.getUTCMonth()===mo-1&&dt.getUTCDate()===d;
+};
+const normalizeDateInput = (v, { fallbackToday=false } = {}) => {
+  if (v == null || String(v).trim() === "") return fallbackToday ? nowIso().slice(0,10) : "";
   if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0,10);
   if (typeof v === "number" || /^\d+(\.\d+)?$/.test(String(v).trim())) {
+    const raw=String(v).trim();
+    if(/^\d{8}$/.test(raw)){
+      const ymd=`${raw.slice(4,8)}-${raw.slice(2,4)}-${raw.slice(0,2)}`;
+      return isValidYmd(ymd)?ymd:"";
+    }
     const n = Number(v);
-    if (n > 20000 && n < 80000) { const d = XLSX.SSF.parse_date_code(n); if (d) return `${d.y}-${String(d.m).padStart(2,"0")}-${String(d.d).padStart(2,"0")}`; }
+    if (n > 20000 && n < 80000) { const d = XLSX.SSF.parse_date_code(n); if (d) { const ymd=`${d.y}-${String(d.m).padStart(2,"0")}-${String(d.d).padStart(2,"0")}`; return isValidYmd(ymd)?ymd:""; } }
   }
   const x=String(v).trim();
   let m=x.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
-  if(m) return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`;
+  if(m){ const ymd=`${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`; return isValidYmd(ymd)?ymd:""; }
   m=x.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/);
-  if(m) return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
-  const d=new Date(x); return isNaN(d)?nowIso().slice(0,10):d.toISOString().slice(0,10);
+  if(m){ const ymd=`${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`; return isValidYmd(ymd)?ymd:""; }
+  return "";
 };
+const parseDateValue = (v) => normalizeDateInput(v,{fallbackToday:true});
+const displayDateInput = (v) => { const ymd=normalizeDateInput(v); if(!ymd) return String(v||""); const [y,m,d]=ymd.split("-"); return `${d}/${m}/${y}`; };
+function DateEntryInput({value,onChange,placeholder="dd/mm/yyyy"}) {
+  const [text,setText]=useState(()=>displayDateInput(value));
+  const pickerRef=useRef(null);
+  useEffect(()=>{setText(displayDateInput(value));},[value]);
+  const commit=(raw=text)=>{ const ymd=normalizeDateInput(raw); if(ymd){setText(displayDateInput(ymd));onChange(ymd);return true;} return false; };
+  return <div className="flex items-center gap-1"><input className={inputCls} style={{...inputStyle,minWidth:125}} inputMode="numeric" value={text} placeholder={placeholder} onChange={e=>{const raw=e.target.value.replace(/[^0-9\/-]/g,"").slice(0,10);setText(raw);const ymd=normalizeDateInput(raw);onChange(ymd||raw)}} onBlur={()=>{if(text.trim())commit()}}/><button type="button" className="px-2 py-1.5 rounded border text-[12px]" style={{borderColor:TOKENS.border}} title="Chọn ngày" onClick={()=>{const el=pickerRef.current;if(el?.showPicker)el.showPicker();else el?.click()}}>📅</button><input ref={pickerRef} type="date" tabIndex={-1} className="absolute opacity-0 pointer-events-none w-0 h-0" value={normalizeDateInput(value)} onChange={e=>{if(e.target.value){onChange(e.target.value);setText(displayDateInput(e.target.value))}}}/></div>;
+}
 const monthsBetween = (a, b) => {
   const d1 = new Date(a), d2 = new Date(b);
   return Math.max(0, (d2.getFullYear() - d1.getFullYear()) * 12 + (d2.getMonth() - d1.getMonth()));
@@ -469,24 +488,13 @@ function withDefaults(d) {
     ownership: a.ownership || "Công ty",
     quantity: Number(a.quantity || 1), unit: a.unit || "Cái"
   }));
-  // v23: Công trình và Kho là một master duy nhất. Mọi địa điểm cũ chưa có trong
-  // danh mục Công trình sẽ được tự động nâng thành một Công trình/Kho để không mất lịch sử.
-  const knownNames = new Set(legacyProjects.map(p=>normalizeText(p.name)));
-  const orphanLocations = [...new Set((Array.isArray(d.warehouse)?d.warehouse:[]).map(w=>safeText(w.locationName||w.warehouseName,"").trim()).filter(Boolean))]
-    .filter(name=>!knownNames.has(normalizeText(name)));
-  orphanLocations.forEach((name,i)=>legacyProjects.push({id:`p_wh_${normalizeText(name).replace(/[^a-z0-9]+/g,"_").slice(0,32)||i}`,commander:"",name,address:"",workItem:"Kho/Công trình chuyển đổi từ dữ liệu cũ",startDate:"",endDate:"",migratedFromWarehouse:true}));
-  const projectByName = new Map(legacyProjects.map(p=>[normalizeText(p.name),p]));
-  const normalizedRepairs=(Array.isArray(d.repairs)?d.repairs:[]).map(r=>({...r,status:r.completeDate?"Hoàn thành":(r.status||"Đang sửa"),attachments:Array.isArray(r.attachments)?r.attachments:[]}));
-  const normalizedMinutes=(Array.isArray(d.minutes)?d.minutes:[]).map(m=>({...m,attachments:Array.isArray(m.attachments)?m.attachments:[]}));
   return {
     ...d,
     assets: migratedAssets,
-    repairs: normalizedRepairs,
-    minutes: normalizedMinutes,
     projects: legacyProjects,
     // Không bao giờ suy diễn tồn kho từ Danh mục tài sản.
     // Đồng thời loại bỏ các dòng nhập giả do Import Danh mục ở các phiên bản cũ.
-    warehouse: (Array.isArray(d.warehouse) ? d.warehouse : []).filter(w => !isLegacyCatalogImportStockRow(w)).map((w, i) => { const a = migratedAssets.find(x => x.id === w.assetId); const loc0=safeText(w.locationName||w.warehouseName,""); const matched=projectByName.get(normalizeText(loc0)); const pid=w.projectId||matched?.id||legacyProjects[0]?.id||null; const loc=pid?(legacyProjects.find(p=>p.id===pid)?.name||loc0):loc0; return { ...w, voucherNo: w.voucherNo || `PN-${String(w.date || nowIso().slice(0,10)).replaceAll("-", "")}-OPEN${String(i+1).padStart(3,"0")}`, projectId: pid, locationType: "project", locationName: loc, warehouseName: "", itemName: w.itemName || a?.name || "", itemCode: w.itemCode || a?.code || "", category: w.category || a?.category || "Khác", assetGroup: w.assetGroup || a?.assetGroup || "Thiết bị chính", ownership: w.ownership || a?.ownership || "Công ty", operationType: w.operationType || (w.type === "nhap" ? "mua_moi" : "su_dung_cong_trinh"), operationLabel: w.operationLabel || OPERATION_LABELS[w.operationType] || (w.type === "nhap" ? "Mua mới bên ngoài" : "Xuất dùng tại công trình"), counterpartyLocation: w.counterpartyLocation || "", repairVendor: w.repairVendor || "", transferId: w.transferId || "" }; }),
+    warehouse: (Array.isArray(d.warehouse) ? d.warehouse : []).filter(w => !isLegacyCatalogImportStockRow(w)).map((w, i) => { const a = migratedAssets.find(x => x.id === w.assetId); const pid = w.projectId || null; const loc = w.locationName || (pid ? legacyProjects.find(p => p.id === pid)?.name : "Kho trung tâm") || "Kho trung tâm"; return { ...w, voucherNo: w.voucherNo || `PN-${String(w.date || nowIso().slice(0,10)).replaceAll("-", "")}-OPEN${String(i+1).padStart(3,"0")}`, projectId: pid, locationType: w.locationType || (pid ? "project" : "warehouse"), locationName: loc, warehouseName: w.warehouseName || (pid ? "" : loc), itemName: w.itemName || a?.name || "", itemCode: w.itemCode || a?.code || "", category: w.category || a?.category || "Khác", assetGroup: w.assetGroup || a?.assetGroup || "Thiết bị chính", ownership: w.ownership || a?.ownership || "Công ty", operationType: w.operationType || (w.type === "nhap" ? "mua_moi" : "su_dung_cong_trinh"), operationLabel: w.operationLabel || OPERATION_LABELS[w.operationType] || (w.type === "nhap" ? "Mua mới bên ngoài" : "Xuất dùng tại công trình"), counterpartyLocation: w.counterpartyLocation || "", repairVendor: w.repairVendor || "", transferId: w.transferId || "" }; }),
     costHistory: Array.isArray(d.costHistory) ? d.costHistory : [],
     employees: undefined,
     settings: {
@@ -1059,18 +1067,23 @@ export default function AssetManagementApp() {
     const editIds = new Set(Array.isArray(editMeta?.rowIds) ? editMeta.rowIds : []);
     const originalRows = Array.isArray(data.warehouse) ? data.warehouse : [];
     const currentRows = editIds.size ? originalRows.filter(w => !editIds.has(w.id)) : originalRows;
-    const locationName = data.projects.find(p=>p.id===form.projectId)?.name || "";
-    if (!form.projectId || !locationName) { notify("Vui lòng chọn Công trình/Kho"); return false; }
+    const locationName = form.locationType === "project" ? (data.projects.find(p=>p.id===form.projectId)?.name || "") : (form.warehouseName || "Kho trung tâm");
+    if (!locationName) { notify("Vui lòng chọn công trình hoặc kho"); return false; }
     const operationType = form.operationType || (form.type === "nhap" ? "mua_moi" : "su_dung_cong_trinh");
     const operationLabel = OPERATION_LABELS[operationType] || operationType;
     if ((operationType === "nhap_khac" || operationType === "xuat_khac") && !String(form.description||"").trim()) { notify("Nhập/Xuất khác bắt buộc nhập diễn giải lý do"); return false; }
-    const counterpartyLocation = data.projects.find(p=>p.id===form.counterpartyProjectId)?.name || "";
+    const counterpartyLocation = form.counterpartyLocationType === "project"
+      ? (data.projects.find(p=>p.id===form.counterpartyProjectId)?.name || "")
+      : String(form.counterpartyWarehouseName || "").trim();
     if ((operationType === "luan_chuyen_di" || operationType === "luan_chuyen_den" || operationType === "thu_hoi_cong_trinh") && !counterpartyLocation) { notify("Vui lòng chọn kho/công trình nguồn hoặc đích"); return false; }
     if (operationType === "luan_chuyen_di" && counterpartyLocation === locationName) { notify("Kho/công trình đi và đến không được trùng nhau"); return false; }
     if (operationType === "sua_chua" && !String(form.repairVendor||"").trim()) { notify("Vui lòng nhập đơn vị sửa chữa"); return false; }
     if (operationType === "mua_moi" && !String(form.supplier||"").trim()) { notify("Phiếu mua mới cần chọn/nhập nhà cung cấp"); return false; }
 
-    const date=parseDateValue(form.date);
+    const date=normalizeDateInput(form.date);
+    const documentDate=normalizeDateInput(form.documentDate || form.date);
+    if(!date){ notify("Ngày hạch toán không hợp lệ. Nhập theo dd/mm/yyyy, ví dụ 26/09/2026"); return false; }
+    if(!documentDate){ notify("Ngày chứng từ không hợp lệ. Nhập theo dd/mm/yyyy, ví dụ 26/09/2026"); return false; }
     const prefixMap={mua_moi:"PN",luan_chuyen_den:"LC",thu_hoi_sua_chua:"PN-SC",thu_hoi_cong_trinh:"PN-TH",nhap_khac:"PN-K",su_dung_cong_trinh:"PX",luan_chuyen_di:"LC",sua_chua:"PX-SC",xuat_khac:"PX-K"};
     const prefix=prefixMap[operationType] || (form.type === "nhap" ? "PN" : "PX"), dateKey=date.replaceAll("-","");
     const seq=currentRows.filter(w=>String(w.voucherNo||"").startsWith(`${prefix}-${dateKey}-`)).length+1;
@@ -1095,10 +1108,10 @@ export default function AssetManagementApp() {
         for(const lot of lots){if(left<=0)break;const take=Math.min(left,lot.remain);if(take>0){fifoAllocations.push({inRowId:lot.rowId,inVoucherNo:lot.voucherNo,inDate:lot.date,quantity:take,unitCost:lot.unitCost,sourceLocation:locationName});totalCost+=take*lot.unitCost;left-=take;}}
         effectiveUnitCost=qty>0?totalCost/qty:0;
       }
-      const base={id:uid("wh"),voucherNo,assetId:asset.id,type:form.type,quantity:qty,date,unitCost:effectiveUnitCost,total:qty*effectiveUnitCost,unit:asset.unit||item.unit||"Cái",receiver:form.receiver||"",supplier:form.supplier||"",description:form.description||form.note||"",note:form.note||"",category:asset.category||"Khác",assetGroup:asset.assetGroup||"Thiết bị chính",ownership:asset.ownership||"Công ty",locationType:"project",locationName,warehouseName:"",projectId:form.projectId||null,itemName:asset.name,itemCode:asset.code,operationType,operationLabel,counterpartyLocation,repairVendor:form.repairVendor||"",transferId,address:form.address||"",referenceNo:form.referenceNo||"",attachedDoc:form.attachedDoc||"",attachments:Array.isArray(form.attachments)?form.attachments:[],transportPerson:form.transportPerson||"",vehicle:form.vehicle||"",orderNo:form.orderNo||"",fifoAllocations};
+      const base={id:uid("wh"),voucherNo,assetId:asset.id,type:form.type,quantity:qty,date,documentDate,unitCost:effectiveUnitCost,total:qty*effectiveUnitCost,unit:asset.unit||item.unit||"Cái",receiver:form.receiver||"",supplier:form.supplier||"",description:form.description||form.note||"",note:form.note||"",category:asset.category||"Khác",assetGroup:asset.assetGroup||"Thiết bị chính",ownership:asset.ownership||"Công ty",locationType:form.locationType||"project",locationName,warehouseName:form.locationType==="warehouse"?locationName:"",projectId:form.projectId||null,itemName:asset.name,itemCode:asset.code,operationType,operationLabel,counterpartyLocation,repairVendor:form.repairVendor||"",transferId,address:form.address||"",referenceNo:form.referenceNo||"",attachedDoc:form.attachedDoc||"",transportPerson:form.transportPerson||"",vehicle:form.vehicle||"",orderNo:form.orderNo||"",fifoAllocations};
       rows.push(base);
       if(operationType === "luan_chuyen_di") {
-        fifoAllocations.forEach((alloc,ai)=>pairedRows.push({...base,id:uid("wh"),type:"nhap",quantity:alloc.quantity,unitCost:alloc.unitCost,total:alloc.quantity*alloc.unitCost,operationType:"luan_chuyen_den",operationLabel:OPERATION_LABELS.luan_chuyen_den,locationType:"project",locationName:counterpartyLocation,warehouseName:"",projectId:form.counterpartyProjectId||null,counterpartyLocation:locationName,supplier:"",receiver:form.receiver||"",sourceInboundVoucher:alloc.inVoucherNo||"",sourceInboundDate:alloc.inDate||"",fifoAllocations:[alloc],transferLayerIndex:ai+1}));
+        fifoAllocations.forEach((alloc,ai)=>pairedRows.push({...base,id:uid("wh"),type:"nhap",quantity:alloc.quantity,unitCost:alloc.unitCost,total:alloc.quantity*alloc.unitCost,operationType:"luan_chuyen_den",operationLabel:OPERATION_LABELS.luan_chuyen_den,locationType:form.counterpartyLocationType||"project",locationName:counterpartyLocation,warehouseName:form.counterpartyLocationType==="warehouse"?counterpartyLocation:"",projectId:form.counterpartyProjectId||null,counterpartyLocation:locationName,supplier:"",receiver:form.receiver||"",sourceInboundVoucher:alloc.inVoucherNo||"",sourceInboundDate:alloc.inDate||"",fifoAllocations:[alloc],transferLayerIndex:ai+1}));
       }
     }
     if(!rows.length) { notify("Không có dòng tài sản hợp lệ"); return false; }
@@ -1136,31 +1149,15 @@ export default function AssetManagementApp() {
       ? data.transactions.filter(t=>!(oldAssetIds.has(t.assetId) && (!oldVoucherNo || String(t.title||"").includes(oldVoucherNo))))
       : data.transactions;
 
-    // Hồ sơ sửa chữa có vòng đời độc lập. Sửa/lưu lại PX-SC KHÔNG được xóa hồ sơ,
-    // KHÔNG được đưa hồ sơ đã hoàn thành quay lại trạng thái "Đang sửa".
-    const completedLinkedRepair = editIds.size && oldVoucherNo ? nextRepairs.find(r=>String(r.warehouseVoucherNo||"")===oldVoucherNo && (r.status==="Hoàn thành" || r.completeDate)) : null;
-    if(completedLinkedRepair){
-      const newAssetIds=new Set(rows.map(r=>r.assetId));
-      const sameAssets=oldAssetIds.size===newAssetIds.size && [...oldAssetIds].every(id=>newAssetIds.has(id));
-      if(operationType!=="sua_chua" || !sameAssets){
-        notify("Phiếu xuất sửa chữa đã hoàn thành. Không được đổi loại nghiệp vụ hoặc mã tài sản vì sẽ phá lịch sử sửa chữa.");
-        return false;
-      }
+    // Dọn phiếu sửa chữa tự sinh từ chứng từ cũ khi đang sửa chính phiếu xuất/thu hồi sửa chữa.
+    if(editIds.size){
+      const oldRepairVouchers=new Set([oldVoucherNo].filter(Boolean));
+      nextRepairs=nextRepairs.filter(r=>!oldRepairVouchers.has(String(r.warehouseVoucherNo||"")) && !oldRepairVouchers.has(String(r.returnVoucherNo||"")));
     }
     if(operationType === "sua_chua") {
       const affected=new Set(rows.map(r=>r.assetId));
-      const existingByAsset=new Map(nextRepairs.filter(r=>affected.has(r.assetId) && (String(r.warehouseVoucherNo||"")===oldVoucherNo || String(r.warehouseVoucherNo||"")===voucherNo)).map(r=>[r.assetId,r]));
-      nextAssets=nextAssets.map(a=>affected.has(a.id) && !existingByAsset.get(a.id)?.completeDate?{...a,status:STATUS.REPAIR}:a);
-      const created=[];
-      rows.forEach(r=>{
-        const old=existingByAsset.get(r.assetId);
-        if(old){
-          nextRepairs=nextRepairs.map(x=>x.id===old.id?{...x,warehouseVoucherNo:voucherNo,date:r.date,description:r.description||x.description,vendor:form.repairVendor||x.vendor,sourceProjectId:r.projectId||x.sourceProjectId,sourceLocation:r.locationName||x.sourceLocation,quantity:Number(r.quantity)||x.quantity||1,unit:r.unit||x.unit||"Cái",sourceUnitCost:Number(r.unitCost)||Number(x.sourceUnitCost)||0,sourceTotal:Number(r.total)||Number(x.sourceTotal)||0,attachments:Array.isArray(r.attachments)?r.attachments:(x.attachments||[])}:x);
-        } else {
-          created.push({id:uid("rp"),assetId:r.assetId,date:r.date,description:r.description||`Xuất sửa chữa theo ${voucherNo}`,cost:0,status:"Đang sửa",vendor:form.repairVendor||"",warehouseVoucherNo:voucherNo,sourceProjectId:r.projectId||null,sourceLocation:r.locationName||"",quantity:Number(r.quantity)||1,unit:r.unit||"Cái",sourceUnitCost:Number(r.unitCost)||0,sourceTotal:Number(r.total)||0,attachments:Array.isArray(r.attachments)?r.attachments:[]});
-        }
-      });
-      nextRepairs=[...created,...nextRepairs];
+      nextAssets=nextAssets.map(a=>affected.has(a.id)?{...a,status:STATUS.REPAIR}:a);
+      nextRepairs=[...rows.map(r=>({id:uid("rp"),assetId:r.assetId,date:r.date,description:r.description||`Xuất sửa chữa theo ${voucherNo}`,cost:0,status:"Đang sửa",vendor:form.repairVendor||"",warehouseVoucherNo:voucherNo})),...nextRepairs];
     } else if(operationType === "thu_hoi_sua_chua") {
       const affected=new Set(rows.map(r=>r.assetId));
       nextAssets=nextAssets.map(a=>affected.has(a.id)?{...a,status:STATUS.UNUSED}:a);
@@ -1217,6 +1214,7 @@ export default function AssetManagementApp() {
       operationType: isTransfer ? "luan_chuyen_di" : (base.operationType || (base.type === "xuat" ? "su_dung_cong_trinh" : "mua_moi")),
       voucherNo: base.voucherNo || "",
       date: parseDateValue(base.date),
+      documentDate: parseDateValue(base.documentDate || base.date),
       receiver: base.receiver || "",
       supplier: base.supplier || "",
       description: base.description || base.note || "",
@@ -1231,7 +1229,6 @@ export default function AssetManagementApp() {
       address: base.address || "",
       referenceNo: base.referenceNo || "",
       attachedDoc: base.attachedDoc || "",
-      attachments: Array.isArray(base.attachments) ? base.attachments : [],
       transportPerson: base.transportPerson || "",
       vehicle: base.vehicle || "",
       orderNo: base.orderNo || "",
@@ -1287,9 +1284,8 @@ export default function AssetManagementApp() {
           const date = parseDateValue(r["Ngày tháng"]);
           const locationText = String(r["Kho/Công trình"] || "").trim();
           const project = data.projects.find(p => p.name.trim().toLowerCase() === locationText.toLowerCase());
-          if (!project) { errors.push(`Dòng ${i + 2}: Kho/Công trình "${locationText}" chưa có trong Danh mục Công trình`); return; }
-          const locationType = "project";
-          const locationName = project.name;
+          const locationType = String(r["Loại địa điểm"] || "").toLowerCase().includes("kho") ? "warehouse" : (project ? "project" : "warehouse");
+          const locationName = project ? project.name : (locationText || "Kho trung tâm");
           const prefix = type === "nhap" ? "PN" : "PX";
           const dateKey = date.replaceAll("-", "");
           const seq = [...existing, ...imported].filter(w => String(w.voucherNo || "").startsWith(`${prefix}-${dateKey}-`)).length + 1;
@@ -1297,7 +1293,7 @@ export default function AssetManagementApp() {
           imported.push({ id: uid("wh"), voucherNo, assetId: asset.id, type, quantity: qty, date, unitCost, total: qty * unitCost,
             unit: String(r["Đơn vị tính"] || asset.unit || "Cái"), receiver: String(r["Người nhận"] || r["Người giao/nhận"] || ""), supplier: String(r["Nhà cung cấp"] || ""), repairVendor: String(r["Đơn vị sửa chữa"] || ""), description: String(r["Diễn giải"] || r["Ghi chú"] || ""), note: String(r["Ghi chú"] || ""),
             category: asset.category || "Khác", assetGroup: asset.assetGroup || "Thiết bị chính", ownership: asset.ownership || "Công ty", operationType, operationLabel, counterpartyLocation: String(r["Kho/Công trình đối ứng"] || ""), transferId: "",
-            locationType, locationName, warehouseName: "", projectId: project.id,
+            locationType, locationName, warehouseName: locationType === "warehouse" ? locationName : "", projectId: project?.id || null,
             itemName: asset.name, itemCode: asset.code });
         });
         if (errors.length) notify(`Import ${imported.length} dòng; ${errors.length} dòng lỗi. ${errors[0]}`);
@@ -1361,62 +1357,15 @@ export default function AssetManagementApp() {
     notify("Đã tạo phiếu sửa chữa");
   };
 
-  const createDirectRepair = (form) => {
-    const asset = form.assetId ? assetsById[form.assetId] : null;
-    const rp={id:uid("rp"),assetId:asset?.id||null,externalCode:asset?"":String(form.externalCode||"").trim(),externalName:asset?"":String(form.externalName||"").trim(),ownerCompany:form.ownerCompany||"",serviceLocation:form.serviceLocation||"",date:parseDateValue(form.date||nowIso().slice(0,10)),description:form.description||"",vendor:form.vendor||"",cost:Number(form.cost||0),status:"Đang sửa",sourceProjectId:form.projectId||asset?.projectId||null,sourceLocation:data.projects.find(p=>p.id===(form.projectId||asset?.projectId))?.name||form.serviceLocation||"",quantity:Number(form.quantity||1),unit:asset?.unit||form.unit||"Cái",attachments:Array.isArray(form.attachments)?form.attachments:[],directEntry:true};
-    if(!asset && !rp.externalName){notify("Vui lòng nhập tên thiết bị ngoài hệ thống");return false;}
-    setData({...data,repairs:[rp,...data.repairs],assets:asset?data.assets.map(a=>a.id===asset.id?{...a,status:STATUS.REPAIR}:a):data.assets,transactions:asset?[{id:uid("tx"),assetId:asset.id,type:"sua_chua",date:rp.date,title:"Tạo hồ sơ sửa chữa trực tiếp",detail:rp.description,amount:rp.cost},...data.transactions]:data.transactions,activityLog:logAction(data.activityLog,`Thêm hồ sơ sửa chữa ${asset?.code||rp.externalCode||rp.externalName}`)});notify("Đã thêm hồ sơ sửa chữa");return true;
-  };
-
-  const createDocument = (form) => {
-    if(!(form.attachments||[]).length){notify("Vui lòng chọn ít nhất 1 file tài liệu");return false;}
-    const bb={id:uid("bb"),assetId:form.assetId||null,projectId:form.projectId||null,type:form.type||"Tài liệu khác",date:parseDateValue(form.date||nowIso().slice(0,10)),content:form.content||"",status:"Đã lưu",referenceNo:form.referenceNo||"",attachments:form.attachments||[]};
-    setData({...data,minutes:[bb,...data.minutes],activityLog:logAction(data.activityLog,`Thêm tài liệu ${bb.type}${bb.referenceNo?` · ${bb.referenceNo}`:""}`)});notify("Đã thêm tài liệu");return true;
-  };
-
-  const updateRepair = (repairId, form) => {
-    const old=data.repairs.find(r=>r.id===repairId); if(!old||old.status==="Hoàn thành"){notify("Chỉ được cập nhật hồ sơ đang sửa");return false;}
-    const next={...old,description:form.description??old.description,vendor:form.vendor??old.vendor,cost:Number((form.cost??old.cost)||0),ownerCompany:form.ownerCompany??old.ownerCompany,serviceLocation:form.serviceLocation??old.serviceLocation,attachments:Array.isArray(form.attachments)?form.attachments:(old.attachments||[])};
-    setData({...data,repairs:data.repairs.map(r=>r.id===repairId?next:r),activityLog:logAction(data.activityLog,`Cập nhật hồ sơ sửa chữa ${assetsById[old.assetId]?.code||old.externalCode||old.externalName||repairId}`)});notify("Đã cập nhật hồ sơ sửa chữa");return true;
-  };
-
-  const updateRepairHistory = (repairId, form) => {
-    const old=data.repairs.find(r=>r.id===repairId); if(!old)return false;
-    const chosen=form.assetId?assetsById[form.assetId]:null;
-    const next={...old,assetId:chosen?.id||null,externalCode:chosen?"":String(form.externalCode||old.externalCode||"").trim(),externalName:chosen?"":String(form.externalName||old.externalName||"").trim(),ownerCompany:form.ownerCompany??old.ownerCompany,serviceLocation:form.serviceLocation??old.serviceLocation,description:form.description??old.description,vendor:form.vendor??old.vendor,cost:Math.max(0,Number(form.cost??old.cost??0)),date:parseDateValue(form.date||old.date),completeDate:form.completeDate?parseDateValue(form.completeDate):old.completeDate,status:form.status||old.status,result:form.result??old.result,returnVoucherNo:form.returnVoucherNo??old.returnVoucherNo,returnLocation:form.returnLocation??old.returnLocation};
-    if(!next.assetId&&!next.externalName){notify("Vui lòng chọn tài sản hoặc nhập tên thiết bị");return false;}
-    setData({...data,repairs:data.repairs.map(r=>r.id===repairId?next:r),activityLog:logAction(data.activityLog,`Điều chỉnh lịch sử sửa chữa ${chosen?.code||next.externalCode||next.externalName}`)});notify("Đã cập nhật lịch sử sửa chữa");return true;
-  };
-
-  const deleteRepairHistory = (repairId) => {
-    const rp=data.repairs.find(r=>r.id===repairId); if(!rp)return;
-    const label=assetsById[rp.assetId]?.code||rp.externalCode||rp.externalName||repairId;
-    if(!window.confirm(`Xóa hồ sơ sửa chữa ${label}?\n\nPhiếu nhập/xuất kho đã phát sinh sẽ KHÔNG bị xóa để tránh làm sai tồn kho.`))return;
-    setData({...data,repairs:data.repairs.filter(r=>r.id!==repairId),activityLog:logAction(data.activityLog,`Xóa lịch sử sửa chữa ${label}`)});notify("Đã xóa hồ sơ khỏi lịch sử sửa chữa");
-  };
-
-  const completeRepair = (repairId) => setModal({ type:"repairComplete", repairId });
-
-  const finalizeRepair = (repairId, form) => {
-    const rp=data.repairs.find(r=>r.id===repairId); if(!rp) return false;
-    if(rp.status==="Hoàn thành" || rp.completeDate){ notify("Hồ sơ sửa chữa này đã hoàn thành"); return false; }
-    const asset=assetsById[rp.assetId]; const date=parseDateValue(form.completeDate||nowIso().slice(0,10));
-    const cost=Math.max(0,Number(form.cost||0)); const attachments=Array.isArray(form.attachments)?form.attachments:[];
-    if(!rp.assetId && form.result==="external_return"){setData({...data,repairs:data.repairs.map(r=>r.id===repairId?{...r,status:"Hoàn thành",completeDate:date,result:"Trả đơn vị/chủ sở hữu",cost,note:form.note||"",attachments:[...(r.attachments||[]),...attachments]}:r),costHistory:data.costHistory,activityLog:logAction(data.activityLog,`Hoàn thành sửa chữa thiết bị ngoài hệ thống ${rp.externalCode||rp.externalName}`)});notify("Đã hoàn thành và trả thiết bị cho đơn vị/chủ sở hữu");return true;}
-    if(form.result==="liquidation"){
-      const lq={id:uid("lq"),assetId:rp.assetId,date,value:Number(form.liquidationValue||0),reason:form.note||`Thanh lý sau sửa chữa ${rp.warehouseVoucherNo||""}`,repairId};
-      const lqTx={id:uid("tx"),assetId:rp.assetId,type:"thanh_ly",date,title:`Thanh lý sau sửa chữa ${rp.warehouseVoucherNo||""}`,detail:lq.reason,amount:lq.value};
-      setData({...data,assets:data.assets.map(a=>a.id===rp.assetId?{...a,status:STATUS.LIQUIDATED}:a),repairs:data.repairs.map(r=>r.id===repairId?{...r,status:"Hoàn thành",completeDate:date,result:"Thanh lý",cost,note:form.note||"",attachments:[...(r.attachments||[]),...attachments],liquidationId:lq.id}:r),liquidations:[lq,...data.liquidations],transactions:[lqTx,...data.transactions],costHistory:cost>0?[{id:uid("cp"),assetId:rp.assetId,type:"Sửa chữa",date,amount:cost,description:form.note||rp.description,vendor:rp.vendor||"",repairId},...data.costHistory]:data.costHistory,activityLog:logAction(data.activityLog,`Hoàn thành sửa chữa ${asset?.code||""} → Thanh lý`)});
-      notify("Đã hoàn thành sửa chữa và chuyển sang Thanh lý"); return true;
-    }
-    const project=data.projects.find(p=>p.id===form.projectId); if(!project){notify("Vui lòng chọn Công trình/Kho nhận lại");return false;}
-    const returnVoucherNo=String(form.returnVoucherNo||"").trim() || `PN-SC-${date.replaceAll("-","")}-${String((data.warehouse||[]).filter(w=>String(w.voucherNo||"").startsWith(`PN-SC-${date.replaceAll("-","")}-`)).length+1).padStart(3,"0")}`;
-    if((data.warehouse||[]).some(w=>String(w.voucherNo||"").trim().toLowerCase()===returnVoucherNo.toLowerCase())){notify(`Số phiếu ${returnVoucherNo} đã tồn tại`);return false;}
-    const qty=Number(form.quantity||rp.quantity||1); if(!(qty>0)){notify("Số lượng thu hồi phải lớn hơn 0");return false;} if(Number(rp.quantity||0)>0 && qty>Number(rp.quantity)+1e-9){notify(`Số lượng thu hồi không được vượt quá số lượng xuất sửa chữa (${rp.quantity})`);return false;}
-    const returnUnitCost=Number(rp.sourceUnitCost)||0; const inRow={id:uid("wh"),voucherNo:returnVoucherNo,assetId:rp.assetId,type:"nhap",quantity:qty,date,unitCost:returnUnitCost,total:qty*returnUnitCost,unit:asset?.unit||"Cái",receiver:form.receiver||"",supplier:rp.vendor||"",description:form.note||`Nhập thu hồi sau sửa chữa ${rp.warehouseVoucherNo||""}`,note:form.note||"",category:asset?.category||"Khác",assetGroup:asset?.assetGroup||"Thiết bị chính",ownership:asset?.ownership||"Công ty",locationType:"project",locationName:project.name,warehouseName:"",projectId:project.id,itemName:asset?.name||"",itemCode:asset?.code||"",operationType:"thu_hoi_sua_chua",operationLabel:OPERATION_LABELS.thu_hoi_sua_chua,counterpartyLocation:rp.sourceLocation||"",repairVendor:rp.vendor||"",repairId,sourceRepairVoucher:rp.warehouseVoucherNo||"",attachments};
-    const tx={id:uid("tx"),assetId:rp.assetId,type:"nhap_kho",date,title:`Nhập thu hồi sửa chữa ${returnVoucherNo}`,detail:`${asset?.name||""} · ${project.name} · từ ${rp.warehouseVoucherNo||"phiếu sửa chữa"}`,amount:0};
-    setData({...data,warehouse:[inRow,...(data.warehouse||[])],transactions:[tx,...data.transactions],assets:data.assets.map(a=>a.id===rp.assetId?{...a,status:STATUS.UNUSED,projectId:project.id}:a),repairs:data.repairs.map(r=>r.id===repairId?{...r,status:"Hoàn thành",completeDate:date,result:"Nhập thu hồi",returnProjectId:project.id,returnLocation:project.name,returnVoucherNo,cost,note:form.note||"",attachments:[...(r.attachments||[]),...attachments]}:r),costHistory:cost>0?[{id:uid("cp"),assetId:rp.assetId,type:"Sửa chữa",date,amount:cost,description:form.note||rp.description,vendor:rp.vendor||"",repairId},...data.costHistory]:data.costHistory,activityLog:logAction(data.activityLog,`Hoàn thành sửa chữa ${asset?.code||""} → ${project.name} · ${returnVoucherNo}`)});
-    notify(`Đã hoàn thành sửa chữa và lập phiếu nhập thu hồi ${returnVoucherNo}`); return true;
+  const completeRepair = (repairId) => {
+    const rp = data.repairs.find((r) => r.id === repairId);
+    setData({
+      ...data,
+      repairs: data.repairs.map((r) => (r.id === repairId ? { ...r, status: "Hoàn thành", completeDate: nowIso().slice(0, 10) } : r)),
+      assets: data.assets.map((a) => (a.id === rp.assetId ? { ...a, status: STATUS.UNUSED } : a)),
+      activityLog: logAction(data.activityLog, `Hoàn thành sửa chữa ${assetsById[rp.assetId]?.code}`),
+    });
+    notify("Đã hoàn thành sửa chữa");
   };
 
   const liquidateAsset = (id, value, reason) => {
@@ -1729,14 +1678,14 @@ export default function AssetManagementApp() {
               )}
               {active === "byProject" && <ByProject data={data} projectName={projectName} onSelect={(id) => { setActive("catalog"); setSelectedAssetId(id); }} />}
               {active === "depreciation" && <Depreciation assets={data.assets} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
-              {active === "repair" && <RepairView repairs={data.repairs.filter((r) => r.status === "Đang sửa")} assetsById={assetsById} onComplete={completeRepair} onEdit={repairId=>setModal({type:"repairEdit",repairId})} onAdd={()=>setModal({type:"repairDirect"})} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
-              {active === "repairHistory" && <RepairHistory repairs={data.repairs} assetsById={assetsById} assets={data.assets} onAdd={()=>setModal({type:"repairDirect"})} onEdit={repairId=>setModal({type:"repairHistoryEdit",repairId})} onDelete={deleteRepairHistory} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
+              {active === "repair" && <RepairView repairs={data.repairs.filter((r) => r.status === "Đang sửa")} assetsById={assetsById} onComplete={completeRepair} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
+              {active === "repairHistory" && <RepairHistory repairs={data.repairs} assetsById={assetsById} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "liquidation" && <LiquidationView liquidations={data.liquidations} assetsById={assetsById} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
-              {active === "minutes" && <MinutesView minutes={data.minutes} assetsById={assetsById} warehouse={data.warehouse||[]} repairs={data.repairs||[]} projects={data.projects||[]} onAdd={()=>setModal({type:"documentAdd"})} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
+              {active === "minutes" && <MinutesView minutes={data.minutes} assetsById={assetsById} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "transactions" && <TransactionsView transactions={data.transactions} assetsById={assetsById} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
 {active === "warehouse" && <WarehouseBoundary><WarehouseHub
                 warehouse={data.warehouse || []} assets={data.assets} projects={data.projects} settings={settings} suppliers={settings.suppliers || []}
-                onAdd={(type, draft=null) => setModal({ type: type === "nhap" ? "warehouseIn" : type === "transfer" ? "warehouseTransfer" : "warehouseOut", draft })}
+                onAdd={(type) => setModal({ type: type === "nhap" ? "warehouseIn" : type === "transfer" ? "warehouseTransfer" : "warehouseOut" })}
                 onExportExcel={doExportExcel} onExportPdf={doExportPdf}
                 onImport={importWarehouseExcel} onDeleteRows={deleteWarehouseRows} onEditRow={openWarehouseEdit} isAdmin={isAdmin}
               /></WarehouseBoundary>}
@@ -1834,17 +1783,11 @@ export default function AssetManagementApp() {
           title={modal.type === "warehouseEdit" ? modal.title : (modal.type === "warehouseIn" ? "Phiếu nhập kho" : modal.type === "warehouseTransfer" ? "Phiếu chuyển kho" : "Phiếu xuất kho")}
           fixedType={modal.type === "warehouseEdit" ? modal.fixedType : (modal.type === "warehouseIn" ? "nhap" : "xuat")}
           fixedOperation={modal.type === "warehouseEdit" ? (modal.fixedOperation || "") : (modal.type === "warehouseTransfer" ? "luan_chuyen_di" : "")}
-          initialData={modal.type === "warehouseEdit" ? modal.initialData : (modal.draft?.form || null)}
-          draftId={modal.draft?.id || null}
+          initialData={modal.type === "warehouseEdit" ? modal.initialData : null}
           submitLabel={modal.type === "warehouseEdit" ? "Lưu thay đổi" : "Lưu chứng từ"}
           assets={data.assets} projects={data.projects} suppliers={settings.suppliers || []} onClose={()=>setModal(null)}
-          onSubmit={f=>{const ok=addWarehouseTx(f, modal.type === "warehouseEdit" ? modal.editMeta : null);if(ok)setModal(null);return ok}}
+          onSubmit={f=>{if(addWarehouseTx(f, modal.type === "warehouseEdit" ? modal.editMeta : null))setModal(null)}}
         />}
-        {modal?.type === "repairEdit" && <RepairEditModal repair={data.repairs.find(r=>r.id===modal.repairId)} onClose={()=>setModal(null)} onSubmit={f=>{if(updateRepair(modal.repairId,f))setModal(null)}} />}
-        {modal?.type === "repairHistoryEdit" && <RepairHistoryEditModal repair={data.repairs.find(r=>r.id===modal.repairId)} assets={data.assets} onClose={()=>setModal(null)} onSubmit={f=>{if(updateRepairHistory(modal.repairId,f))setModal(null)}} />}
-        {modal?.type === "repairDirect" && <DirectRepairModal assets={data.assets} projects={data.projects} onClose={()=>setModal(null)} onSubmit={f=>{if(createDirectRepair(f))setModal(null)}} />}
-        {modal?.type === "documentAdd" && <DocumentModal assets={data.assets} projects={data.projects} onClose={()=>setModal(null)} onSubmit={f=>{if(createDocument(f))setModal(null)}} />}
-        {modal?.type === "repairComplete" && <RepairCompleteModal repair={data.repairs.find(r=>r.id===modal.repairId)} asset={assetsById[data.repairs.find(r=>r.id===modal.repairId)?.assetId]} projects={data.projects} onClose={()=>setModal(null)} onSubmit={f=>{if(finalizeRepair(modal.repairId,f))setModal(null)}} />}
         {modal?.type === "costHistory" && <CostHistoryModal assets={data.assets} onClose={()=>setModal(null)} onSubmit={f=>{addCostHistory(f);setModal(null)}} />}
         {modal?.type === "changePassword" && (
           <ChangePasswordModal onClose={() => setModal(null)} onSubmit={async (oldPw, newPw) => { const ok = await changeOwnPassword(oldPw, newPw); if (ok) setModal(null); }} />
@@ -2260,19 +2203,39 @@ function AssetDetail({ asset, data, projectName, isAdmin, onDelete, onClose, onA
 /* ============================== BY EMPLOYEE ============================== */
 
 function ByProject({ data, projectName, onSelect }) {
-  const assetsById=Object.fromEntries((data.assets||[]).map(a=>[a.id,a]));
-  const rows=(data.warehouse||[]).filter(Boolean);
-  const grouped=(data.projects||[]).map(project=>{
-    const byAsset=new Map();
-    rows.filter(w=>w.projectId===project.id).forEach(w=>{
-      const qty=Number(w.quantity||0); const delta=w.type==="nhap"?qty:-qty;
-      const old=byAsset.get(w.assetId)||{assetId:w.assetId,quantity:0,inQty:0,outQty:0};
-      old.quantity+=delta; if(w.type==="nhap")old.inQty+=qty; else old.outQty+=qty; byAsset.set(w.assetId,old);
-    });
-    const stock=[...byAsset.values()].filter(x=>x.quantity>1e-9).map(x=>({...x,asset:assetsById[x.assetId]||{id:x.assetId,code:"—",name:"Tài sản chưa có trong danh mục",unit:""}}));
-    return {project,stock,totalQty:stock.reduce((t,x)=>t+x.quantity,0)};
-  });
-  return <div className="aa-fade"><div className="mb-4"><h1 className="aa-display text-xl font-semibold">Tài sản theo công trình</h1><div className="text-[11.5px] mt-1" style={{color:TOKENS.muted}}>Số liệu lấy trực tiếp từ Nhập – Xuất – Chuyển – Thu hồi. Danh mục tài sản không quyết định vị trí tồn.</div></div><div className="space-y-4">{grouped.map(({project,stock,totalQty})=><div key={project.id} className="rounded-lg overflow-hidden" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><div className="flex items-center justify-between px-4 py-3" style={{borderBottom:`1px solid ${TOKENS.border}`}}><div className="flex items-center gap-2.5"><div className="w-8 h-8 rounded-full flex items-center justify-center aa-display font-semibold text-[12px]" style={{background:TOKENS.brandSoft,color:TOKENS.brand}}>{project.name?.split(" ").slice(-1)[0]?.[0]||"C"}</div><div><div className="text-[13px] font-medium">{project.name}</div><div className="text-[11.5px]" style={{color:TOKENS.muted}}>{project.commander} · {project.address}</div></div></div><div className="aa-mono text-[12px]" style={{color:TOKENS.muted}}><b style={{color:TOKENS.ink}}>{stock.length}</b> mã · Tổng tồn <b style={{color:TOKENS.brand}}>{Number(totalQty).toLocaleString("vi-VN")}</b></div></div>{stock.length>0?<div className="overflow-auto"><table className="w-full"><thead><tr><Th>Mã tài sản</Th><Th>Tên tài sản</Th><Th>ĐVT</Th><Th right>Nhập</Th><Th right>Xuất</Th><Th right>Tồn</Th></tr></thead><tbody>{stock.map(x=><tr key={x.assetId} className="aa-row" onClick={()=>x.asset?.id&&onSelect(x.asset.id)} style={{cursor:x.asset?.id?"pointer":"default"}}><Td mono><Tag>{x.asset.code}</Tag></Td><Td>{x.asset.name}</Td><Td>{x.asset.unit||"Cái"}</Td><Td right mono>{Number(x.inQty).toLocaleString("vi-VN")}</Td><Td right mono>{Number(x.outQty).toLocaleString("vi-VN")}</Td><Td right mono><b>{Number(x.quantity).toLocaleString("vi-VN")}</b></Td></tr>)}</tbody></table></div>:<div className="px-4 py-4 text-[12px]" style={{color:TOKENS.muted}}>Không có tồn kho thực tế tại Công trình/Kho này.</div>}</div>)}</div></div>;
+  const grouped = data.projects.map((project) => ({ project, assets: data.assets.filter((a) => a.projectId === project.id) }));
+  return (
+    <div className="aa-fade">
+      <h1 className="aa-display text-xl font-semibold mb-4">Tài sản theo công trình</h1>
+      <div className="space-y-4">
+        {grouped.map(({ project, assets }) => (
+          <div key={project.id} className="rounded-lg overflow-hidden" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+            <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: `1px solid ${TOKENS.border}` }}>
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center aa-display font-semibold text-[12px]" style={{ background: TOKENS.brandSoft, color: TOKENS.brand }}>
+                  {project.name?.split(" ").slice(-1)[0]?.[0] || "C"}
+                </div>
+                <div>
+                  <div className="text-[13px] font-medium">{project.name}</div>
+                  <div className="text-[11.5px]" style={{ color: TOKENS.muted }}>{project.commander} · {project.address}</div>
+                </div>
+              </div>
+              <div className="aa-mono text-[12px]" style={{ color: TOKENS.muted }}>{assets.length} tài sản</div>
+            </div>
+            {assets.length > 0 && (
+              <div className="px-4 py-2 flex flex-wrap gap-2">
+                {assets.map((a) => (
+                  <button key={a.id} onClick={() => onSelect(a.id)} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px]" style={{ background: TOKENS.paper }}>
+                    <Tag>{a.code}</Tag><span>{a.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 /* ============================== DEPRECIATION ============================== */
@@ -2320,18 +2283,72 @@ function Depreciation({ assets, onExportExcel, onExportPdf }) {
 
 /* ============================== REPAIR ============================== */
 
-function RepairView({ repairs, assetsById, onComplete, onEdit, onAdd, onExportExcel, onExportPdf }) {
-  const info=r=>assetsById[r.assetId]||{code:r.externalCode||"NGOAI-HT",name:r.externalName||"Thiết bị ngoài hệ thống"};
-  const headers=["Mã tài sản","Tên tài sản","Đơn vị sở hữu","Ngày gửi","Mô tả / lỗi","Chi phí","Trạng thái"];
-  const rows=repairs.map(r=>{const a=info(r);return[a.code||"",a.name||"",r.ownerCompany||"",fmtDate(r.date),r.description||"",Number(r.cost||0),r.status||""]});
-  return <div className="aa-fade"><div className="flex items-center justify-between mb-4"><div><h1 className="aa-display text-xl font-semibold">Sửa chữa — đang xử lý</h1><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Theo dõi cả tài sản TMC và máy/thiết bị ngoài hệ thống.</div></div><div className="flex gap-2"><ExportBar onExcel={()=>onExportExcel("sua-chua-dang-xu-ly",headers,rows)} onPdf={()=>onExportPdf("Sửa chữa — đang xử lý",headers,rows)}/><Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm sửa chữa</Btn></div></div>{repairs.length===0?<div className="rounded-lg" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><EmptyState text="Không có hồ sơ sửa chữa đang mở" sub="Bấm Thêm sửa chữa hoặc xuất đi sửa chữa từ Kho/Công trình."/></div>:<div className="grid grid-cols-2 gap-3">{repairs.map(r=>{const a=info(r);return <div key={r.id} className="rounded-lg p-4" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><div className="flex justify-between items-start"><div><Tag>{a.code}</Tag><div className="text-[13px] font-medium mt-1">{a.name}</div>{r.ownerCompany&&<div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Đơn vị sở hữu: {r.ownerCompany}</div>}</div><span className="text-[11px] px-2 py-0.5 rounded-full" style={{background:TOKENS.goldSoft,color:TOKENS.gold}}>{r.status}</span></div><div className="text-[12.5px] mt-2" style={{color:TOKENS.muted}}>{r.description}</div><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Nguồn: <b>{r.warehouseVoucherNo?`Phiếu xuất ${r.warehouseVoucherNo}`:"Thêm trực tiếp"}</b> · Nơi xuất/đang phục vụ: <b>{r.sourceLocation||r.serviceLocation||"—"}</b></div><div className="flex justify-between items-center mt-3"><span className="aa-mono text-[12px]">{fmtDate(r.date)} · {fmtVND(r.cost)}</span><div className="flex gap-2"><Btn small icon={Pencil} onClick={()=>onEdit(r.id)}>Cập nhật</Btn><Btn small kind="primary" onClick={()=>onComplete(r.id)}>Hoàn thành sửa chữa</Btn></div></div></div>})}</div>}</div>;
+function RepairView({ repairs, assetsById, onComplete, onExportExcel, onExportPdf }) {
+  const headers=["Mã tài sản","Tên tài sản","Ngày gửi","Mô tả / lỗi","Chi phí","Trạng thái"];
+  const rows=repairs.map(r=>{const a=assetsById[r.assetId]||{};return[a.code||"",a.name||"",fmtDate(r.date),r.description||"",Number(r.cost||0),r.status||""]});
+  return (
+    <div className="aa-fade">
+      <div className="flex items-center justify-between mb-4"><div><h1 className="aa-display text-xl font-semibold">Sửa chữa — đang xử lý</h1><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Có thể xuất danh sách đang sửa ra Excel/PDF.</div></div><ExportBar onExcel={()=>onExportExcel("sua-chua-dang-xu-ly",headers,rows)} onPdf={()=>onExportPdf("Sửa chữa — đang xử lý",headers,rows)}/></div>
+      {repairs.length === 0 ? (
+        <div className="rounded-lg" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+          <EmptyState text="Không có phiếu sửa chữa nào đang mở" sub="Tạo phiếu sửa chữa từ trang chi tiết tài sản hoặc xuất đi sửa chữa từ Kho." />
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3">
+          {repairs.map((r) => {
+            const a = assetsById[r.assetId];
+            return (
+              <div key={r.id} className="rounded-lg p-4" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+                <div className="flex justify-between items-start">
+                  <div><Tag>{a?.code}</Tag><div className="text-[13px] font-medium mt-1">{a?.name}</div></div>
+                  <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: TOKENS.goldSoft, color: TOKENS.gold }}>{r.status}</span>
+                </div>
+                <div className="text-[12.5px] mt-2" style={{ color: TOKENS.muted }}>{r.description}</div>
+                <div className="flex justify-between items-center mt-3">
+                  <span className="aa-mono text-[12px]">{fmtDate(r.date)} · {fmtVND(r.cost)}</span>
+                  <Btn small kind="primary" onClick={() => onComplete(r.id)}>Hoàn thành</Btn>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
-function RepairHistory({ repairs, assetsById, assets=[], onAdd, onEdit, onDelete, onExportExcel, onExportPdf }) {
-  const info=r=>assetsById[r.assetId]||{code:r.externalCode||"NGOAI-HT",name:r.externalName||"Thiết bị ngoài hệ thống"};
-  const headers = ["Mã quản lý", "Tài sản", "PX sửa chữa", "Nơi xuất", "Mô tả", "Ngày gửi", "Ngày hoàn thành", "Kết quả", "PN thu hồi", "Nơi nhận", "Chi phí", "Trạng thái"];
-  const buildRows = () => repairs.map((r) => { const a=info(r); return [a.code||"",a.name||"",r.warehouseVoucherNo||"",r.sourceLocation||r.serviceLocation||"",r.description||"",fmtDate(r.date),fmtDate(r.completeDate),r.result||"",r.returnVoucherNo||"",r.returnLocation||r.ownerCompany||"",Number(r.cost||0),r.status||""]; });
-  return <div className="aa-fade"><div className="flex items-center justify-between mb-4"><div><h1 className="aa-display text-xl font-semibold">Lịch sử sửa chữa</h1><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Cho phép thêm, chỉnh sửa và xóa hồ sơ khi cần điều chỉnh sai mã vật tư/thiết bị. Việc sửa lịch sử không tự ý thay đổi số lượng tồn kho.</div></div><div className="flex gap-2"><ExportBar onExcel={()=>onExportExcel("lich-su-sua-chua",headers,buildRows())} onPdf={()=>onExportPdf("Lịch sử sửa chữa",headers,buildRows())}/><Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm mới</Btn></div></div><div className="rounded-lg overflow-auto" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><table className="w-full min-w-[1650px]"><thead><tr>{headers.map(h=><Th key={h}>{h}</Th>)}<Th>Thao tác</Th></tr></thead><tbody>{repairs.map(r=>{const a=info(r);return <tr key={r.id} className="aa-row"><Td mono><Tag>{a.code||"—"}</Tag></Td><Td>{a.name||"—"}</Td><Td>{r.warehouseVoucherNo||"—"}</Td><Td>{r.sourceLocation||r.serviceLocation||"—"}</Td><Td>{r.description||"—"}</Td><Td>{fmtDate(r.date)}</Td><Td>{fmtDate(r.completeDate)}</Td><Td>{r.result||"—"}</Td><Td>{r.returnVoucherNo||"—"}</Td><Td>{r.returnLocation||r.ownerCompany||"—"}</Td><Td right mono>{fmtVND(r.cost)}</Td><Td><span style={{color:r.status==="Hoàn thành"?TOKENS.brand:TOKENS.gold}}>{r.status}</span></Td><Td><div className="flex gap-2"><Btn small icon={Pencil} onClick={()=>onEdit(r.id)}>Sửa</Btn><Btn small kind="danger" icon={Trash2} onClick={()=>onDelete(r.id)}>Xóa</Btn></div></Td></tr>})}</tbody></table>{repairs.length===0&&<EmptyState text="Chưa có lịch sử sửa chữa"/>}</div></div>;
+function RepairHistory({ repairs, assetsById, onExportExcel, onExportPdf }) {
+  const headers = ["Mã quản lý", "Tài sản", "Mô tả", "Ngày gửi", "Chi phí", "Trạng thái"];
+  const buildRows = () => repairs.map((r) => {
+    const a = assetsById[r.assetId];
+    return [a?.code, a?.name, r.description, fmtDate(r.date), r.cost, r.status];
+  });
+  return (
+    <div className="aa-fade">
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="aa-display text-xl font-semibold">Lịch sử sửa chữa</h1>
+        <ExportBar onExcel={() => onExportExcel("lich-su-sua-chua", headers, buildRows())} onPdf={() => onExportPdf("Lịch sử sửa chữa", headers, buildRows())} />
+      </div>
+      <div className="rounded-lg overflow-hidden" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+        <table className="w-full">
+          <thead><tr><Th>Mã quản lý</Th><Th>Tài sản</Th><Th>Mô tả</Th><Th>Ngày gửi</Th><Th right>Chi phí</Th><Th>Trạng thái</Th></tr></thead>
+          <tbody>
+            {repairs.map((r) => {
+              const a = assetsById[r.assetId];
+              return (
+                <tr key={r.id} className="aa-row">
+                  <Td mono><Tag>{a?.code}</Tag></Td><Td>{a?.name}</Td><Td>{r.description}</Td>
+                  <Td>{fmtDate(r.date)}</Td><Td right mono>{fmtVND(r.cost)}</Td>
+                  <Td><span style={{ color: r.status === "Hoàn thành" ? TOKENS.brand : TOKENS.gold }}>{r.status}</span></Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {repairs.length === 0 && <EmptyState text="Chưa có lịch sử sửa chữa" />}
+      </div>
+    </div>
+  );
 }
 
 /* ============================== LIQUIDATION ============================== */
@@ -2371,33 +2388,37 @@ function LiquidationView({ liquidations, assetsById, onExportExcel, onExportPdf 
 
 /* ============================== MINUTES / TRANSACTIONS / EMPLOYEES / LOG ============================== */
 
-function MinutesView({ minutes, assetsById, warehouse=[], repairs=[], projects=[], onAdd, onExportExcel, onExportPdf }) {
-  const docs=[];
-  (minutes||[]).forEach(m=>(m.attachments||[]).forEach(a=>docs.push({...a,docId:m.id,docType:m.type||"Biên bản",source:"Thêm trực tiếp",voucherNo:m.referenceNo||"",projectId:m.projectId||"",assetId:m.assetId||"",date:m.date,content:m.content||""})));
-  (warehouse||[]).forEach(w=>(w.attachments||[]).forEach(a=>docs.push({...a,docId:`wh-${w.id}-${a.id}`,docType:"Chứng từ kho",source:w.type==="nhap"?"Phiếu nhập":"Phiếu xuất",voucherNo:w.voucherNo||"",projectId:w.projectId||"",assetId:w.assetId||"",date:w.date,content:w.description||w.note||""})));
-  (repairs||[]).forEach(r=>(r.attachments||[]).forEach(a=>docs.push({...a,docId:`rp-${r.id}-${a.id}`,docType:"Chứng từ sửa chữa",source:"Sửa chữa",voucherNo:r.warehouseVoucherNo||r.returnVoucherNo||"",projectId:r.returnProjectId||r.sourceProjectId||"",assetId:r.assetId||"",date:r.completeDate||r.date,content:r.description||""})));
-  const unique=[...new Map(docs.map(d=>[`${d.id||d.name}-${d.source}-${d.voucherNo}`,d])).values()];
-  const projectMap=Object.fromEntries((projects||[]).map(p=>[p.id,p.name]));
-  const headers=["Loại tài liệu","Tên file","Nguồn","Số phiếu","Công trình/Kho","Tài sản","Ngày","Nội dung"];
-  const rows=unique.map(d=>[d.docType,d.name,d.source,d.voucherNo,projectMap[d.projectId]||"",assetsById[d.assetId]?.code||"",fmtDate(d.date),d.content||""]);
-  const open=d=>{
-    if(!d?.dataUrl){alert("File không còn dữ liệu để xem. Vui lòng tải lại file nguồn.");return;}
-    const previewable=/^(image\/|application\/pdf)/i.test(d.type||"")||/\.(jpe?g|png|pdf)$/i.test(d.name||"");
-    if(!previewable){download(d);return;}
-    try{
-      const parts=String(d.dataUrl).split(","); const meta=parts[0]||""; const payload=parts.slice(1).join(",");
-      const mime=(meta.match(/data:([^;]+)/i)||[])[1]||d.type||"application/octet-stream";
-      let bytes;
-      if(/;base64/i.test(meta)){const bin=atob(payload);bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);}
-      else{const txt=decodeURIComponent(payload);bytes=new TextEncoder().encode(txt);}
-      const url=URL.createObjectURL(new Blob([bytes],{type:mime}));
-      const win=window.open(url,"_blank","noopener,noreferrer");
-      if(!win){const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener noreferrer";document.body.appendChild(a);a.click();a.remove();}
-      window.setTimeout(()=>URL.revokeObjectURL(url),60000);
-    }catch(err){console.error(err);download(d);}
-  };
-  const download=d=>{if(!d?.dataUrl)return;const a=document.createElement("a");a.href=d.dataUrl;a.download=d.name||"tai-lieu";document.body.appendChild(a);a.click();a.remove();};
-  return <div className="aa-fade"><div className="flex items-center justify-between mb-4"><div><h1 className="aa-display text-xl font-semibold">Biên bản / Tài liệu</h1><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Tự động tập hợp file từ Phiếu nhập, Phiếu xuất và Sửa chữa; đồng thời cho phép thêm tài liệu độc lập.</div></div><div className="flex gap-2"><ExportBar onExcel={()=>onExportExcel("bien-ban-tai-lieu",headers,rows)} onPdf={()=>onExportPdf("Biên bản / Tài liệu",headers,rows)}/><Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm tài liệu</Btn></div></div><div className="rounded-lg overflow-auto" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><table className="w-full min-w-[1250px]"><thead><tr>{headers.map(h=><Th key={h}>{h}</Th>)}<Th>Thao tác</Th></tr></thead><tbody>{unique.map(d=><tr key={d.docId} className="aa-row"><Td>{d.docType}</Td><Td>{d.name}</Td><Td>{d.source}</Td><Td mono>{d.voucherNo||"—"}</Td><Td>{projectMap[d.projectId]||"—"}</Td><Td mono>{assetsById[d.assetId]?.code||"—"}</Td><Td>{fmtDate(d.date)}</Td><Td>{d.content||"—"}</Td><Td><div className="flex gap-2"><button type="button" onClick={()=>open(d)} style={{color:TOKENS.info}}>Xem/Mở</button><button type="button" onClick={()=>download(d)}>Tải</button></div></Td></tr>)}</tbody></table>{unique.length===0&&<EmptyState text="Chưa có tài liệu nào" sub="Bấm Thêm tài liệu hoặc đính kèm file trong Phiếu nhập / Phiếu xuất / Sửa chữa."/>}</div></div>;
+function MinutesView({ minutes, assetsById, onExportExcel, onExportPdf }) {
+  const headers = ["Loại biên bản", "Mã quản lý", "Nội dung", "Ngày lập", "Trạng thái"];
+  const buildRows = () => minutes.map((m) => {
+    const a = assetsById[m.assetId];
+    return [m.type, a?.code, m.content, fmtDate(m.date), m.status];
+  });
+  return (
+    <div className="aa-fade">
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="aa-display text-xl font-semibold">Biên bản</h1>
+        <ExportBar onExcel={() => onExportExcel("bien-ban", headers, buildRows())} onPdf={() => onExportPdf("Biên bản", headers, buildRows())} />
+      </div>
+      <div className="rounded-lg overflow-hidden" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
+        <table className="w-full">
+          <thead><tr><Th>Loại biên bản</Th><Th>Tài sản</Th><Th>Nội dung</Th><Th>Ngày lập</Th><Th>Trạng thái</Th></tr></thead>
+          <tbody>
+            {minutes.map((m) => {
+              const a = assetsById[m.assetId];
+              return (
+                <tr key={m.id} className="aa-row">
+                  <Td>{m.type}</Td><Td mono><Tag>{a?.code}</Tag></Td><Td>{m.content}</Td>
+                  <Td>{fmtDate(m.date)}</Td><Td>{m.status}</Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {minutes.length === 0 && <EmptyState text="Chưa có biên bản nào" />}
+      </div>
+    </div>
+  );
 }
 
 const TX_LABEL = { mua_sam: "Mua sắm", cap_phat: "Cấp phát", chuyen_bo_phan: "Chuyển bộ phận", sua_chua: "Sửa chữa", thanh_ly: "Thanh lý" };
@@ -2440,7 +2461,7 @@ function TransactionsView({ transactions, assetsById, onExportExcel, onExportPdf
 function ProjectsView({ projects, assets, onAdd, onExportExcel, onExportPdf, isAdmin, onDelete }) {
   const headers = ["Chỉ huy trưởng","Tên công trình","Địa chỉ","Hạng mục thi công","Ngày bắt đầu","Ngày kết thúc","Tài sản"];
   const rows = projects.map(p => [p.commander,p.name,p.address,p.workItem,fmtDate(p.startDate),fmtDate(p.endDate),assets.filter(a=>a.projectId===p.id).length]);
-  return <div className="aa-fade"><div className="flex items-center justify-between mb-4"><h1 className="aa-display text-xl font-semibold">Công trình / Kho</h1><div className="flex gap-2"><ExportBar onExcel={()=>onExportExcel("cong-trinh",headers,rows)} onPdf={()=>onExportPdf("Công trình",headers,rows)}/><Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm Công trình/Kho</Btn></div></div><div className="rounded-lg overflow-hidden" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><table className="w-full"><thead><tr>{headers.map(h=><Th key={h}>{h}</Th>)}{isAdmin&&<Th>Thao tác</Th>}</tr></thead><tbody>{projects.map(p=><tr key={p.id} className="aa-row"><Td>{p.commander}</Td><Td>{p.name}</Td><Td>{p.address}</Td><Td>{p.workItem}</Td><Td>{fmtDate(p.startDate)}</Td><Td>{fmtDate(p.endDate)}</Td><Td right mono>{assets.filter(a=>a.projectId===p.id).length}</Td>{isAdmin&&<Td><button className="p-1 rounded hover:bg-black/10" title="Xoá công trình" onClick={()=>onDelete(p.id)}><Trash2 size={14}/></button></Td>}</tr>)}</tbody></table>{projects.length===0&&<EmptyState text="Chưa có Công trình/Kho"/>}</div></div>;
+  return <div className="aa-fade"><div className="flex items-center justify-between mb-4"><h1 className="aa-display text-xl font-semibold">Công trình</h1><div className="flex gap-2"><ExportBar onExcel={()=>onExportExcel("cong-trinh",headers,rows)} onPdf={()=>onExportPdf("Công trình",headers,rows)}/><Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm công trình</Btn></div></div><div className="rounded-lg overflow-hidden" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><table className="w-full"><thead><tr>{headers.map(h=><Th key={h}>{h}</Th>)}{isAdmin&&<Th>Thao tác</Th>}</tr></thead><tbody>{projects.map(p=><tr key={p.id} className="aa-row"><Td>{p.commander}</Td><Td>{p.name}</Td><Td>{p.address}</Td><Td>{p.workItem}</Td><Td>{fmtDate(p.startDate)}</Td><Td>{fmtDate(p.endDate)}</Td><Td right mono>{assets.filter(a=>a.projectId===p.id).length}</Td>{isAdmin&&<Td><button className="p-1 rounded hover:bg-black/10" title="Xoá công trình" onClick={()=>onDelete(p.id)}><Trash2 size={14}/></button></Td>}</tr>)}</tbody></table>{projects.length===0&&<EmptyState text="Chưa có công trình"/>}</div></div>;
 }
 
 function ActivityLogView({ log }) {
@@ -2504,9 +2525,7 @@ function WarehouseHub({ warehouse = [], assets = [], projects = [], settings = {
   const [tab,setTab]=useState("in");
   const [query,setQuery]=useState("");
   const [selectedRows,setSelectedRows]=useState([]);
-  const [filter,setFilter]=useState({status:"all",category:"",group:"",ownership:"",projectId:"",locationName:"",supplier:"",operationType:"",asOfDate:nowIso().slice(0,10)});
-  const [drafts,setDrafts]=useState(()=>loadWarehouseDrafts());
-  useEffect(()=>{const sync=()=>setDrafts(loadWarehouseDrafts());window.addEventListener("myhl:drafts-changed",sync);window.addEventListener("storage",sync);return()=>{window.removeEventListener("myhl:drafts-changed",sync);window.removeEventListener("storage",sync)}},[]);
+  const [filter,setFilter]=useState({category:"",group:"",ownership:"",projectId:"",locationName:"",supplier:"",operationType:"",asOfDate:nowIso().slice(0,10)});
   const assetMap=Object.fromEntries(safeAssets.map(a=>[a.id,a]));
   const projectMap=Object.fromEntries(safeProjects.map(p=>[p.id,p]));
   const getLocation=(w)=>safeText(w?.locationName || (w?.projectId ? projectMap[safeText(w.projectId)]?.name : "") || w?.warehouseName, "Kho trung tâm");
@@ -2530,9 +2549,6 @@ function WarehouseHub({ warehouse = [], assets = [], projects = [], settings = {
     return true;
   };
   const filteredTx=safeWarehouse.filter(matchesCommon);
-  const draftMatches=(d)=>{const f=d?.form||{};if(tab==="in"&&f.type!=="nhap")return false;if(tab==="out"&&(f.type!=="xuat"||f.operationType==="luan_chuyen_di"))return false;if(tab==="transfer"&&f.operationType!=="luan_chuyen_di")return false;if(filter.projectId&&f.projectId!==filter.projectId)return false;if(filter.operationType&&f.operationType!==filter.operationType)return false;if(query&&!normalizeText(`${f.voucherNo||""} ${f.supplier||""} ${f.receiver||""} ${f.description||""} ${f.referenceNo||""}`).includes(normalizeText(query)))return false;return true};
-  const visibleDrafts=drafts.filter(draftMatches);
-  const deleteDraft=id=>{if(!window.confirm("Xóa bút toán chưa ghi sổ này?"))return;saveWarehouseDrafts(loadWarehouseDrafts().filter(d=>d.id!==id));};
   const txHeaders=["","Số phiếu","Ngày chứng từ","Loại nghiệp vụ","Mã hàng","Tên hàng","Xuất/Nhập tại Kho-Công trình","Kho-Công trình đối ứng","ĐVT","Số lượng","Đơn giá / Giá vốn","Thành tiền","Đối tượng / NCC","Người giao nhận","Tham chiếu","Diễn giải","Thao tác"];
   const asOf=filter.asOfDate||nowIso().slice(0,10);
   const reportTx=safeWarehouse.filter(w=>!w.date || safeText(w.date).slice(0,10)<=asOf).slice().sort((a,b)=>{const da=safeText(a.date),db=safeText(b.date);if(da!==db)return da.localeCompare(db);const ta=a.type==="nhap"?0:1,tb=b.type==="nhap"?0:1;if(ta!==tb)return ta-tb;return `${safeText(a.voucherNo)}|${safeText(a.id)}`.localeCompare(`${safeText(b.voucherNo)}|${safeText(b.id)}`);});
@@ -2574,8 +2590,8 @@ function WarehouseHub({ warehouse = [], assets = [], projects = [], settings = {
   const fifoLinkHeaders=["Kho/Công trình","Mã tài sản","Tên tài sản","ĐVT","Loại tài sản","Phiếu nhập FIFO","Ngày nhập","SL lấy từ lô nhập","Đơn giá nhập","Phiếu xuất","Ngày xuất","Mục đích xuất","Người nhận","SL xuất","Giá vốn FIFO / Giá trị còn","Trạng thái","Diễn giải"];
   const fifoLinkRows=fifoLinked.sort((a,b)=>`${a[0]}|${a[1]}|${a[6]}|${a[9]}`.localeCompare(`${b[0]}|${b[1]}|${b[6]}|${b[9]}`));
   const tabBtn=(id,label,icon)=><button type="button" onClick={()=>setTab(id)} className="flex items-center gap-2 px-4 py-2.5 text-[13px] font-medium whitespace-nowrap" style={{color:tab===id?TOKENS.brand:TOKENS.muted,borderBottom:`2px solid ${tab===id?TOKENS.brand:"transparent"}`}}>{icon}{label}</button>;
-  const downloadTemplate=()=>downloadExcelTemplate("Mau_Import_Phieu_Nhap_Xuat_Kho",["Loại phiếu","Loại nghiệp vụ","Số phiếu","Ngày tháng","Tên tài sản","Mã hàng","Kho/Công trình","Kho/Công trình đối ứng","Nhà cung cấp","Đơn vị sửa chữa","Người giao/nhận","Số lượng","Đơn vị tính","Đơn giá","Diễn giải","Ghi chú"],[["Nhập kho","Mua mới bên ngoài","PN-20260824-001","24/08/2026","Máy khoan mẫu","TS-001",safeProjects[0]?.name||"","",supplierNames[0]||"Nhà cung cấp A","","Nguyễn Văn A",1,"Cái",3500000,"Nhập mua mới",""]]);
-  const filterProps={filter,setFilter,categories,groups:groupsList,ownerships,projects:safeProjects,locations,suppliers:supplierNames,operations:operationOptions,showStatus:(tab==="in"||tab==="out"||tab==="transfer")};
+  const downloadTemplate=()=>downloadExcelTemplate("Mau_Import_Phieu_Nhap_Xuat_Kho",["Loại phiếu","Loại nghiệp vụ","Số phiếu","Ngày tháng","Tên tài sản","Mã hàng","Kho/Công trình","Loại địa điểm","Kho/Công trình đối ứng","Nhà cung cấp","Đơn vị sửa chữa","Người giao/nhận","Số lượng","Đơn vị tính","Đơn giá","Diễn giải","Ghi chú"],[["Nhập kho","Mua mới bên ngoài","PN-20260824-001","24/08/2026","Máy khoan mẫu","TS-001",safeProjects[0]?.name||"Kho trung tâm",safeProjects[0]?"Công trình":"Kho","",supplierNames[0]||"Nhà cung cấp A","","Nguyễn Văn A",1,"Cái",3500000,"Nhập mua mới",""]]);
+  const filterProps={filter,setFilter,categories,groups:groupsList,ownerships,projects:safeProjects,locations,suppliers:supplierNames,operations:operationOptions};
   const visibleType=tab==="in"?"nhap":"xuat";
   const visibleRows=tab==="transfer"?filteredTx.filter(w=>w.type==="xuat"&&w.operationType==="luan_chuyen_di"):filteredTx.filter(w=>w.type===visibleType&&w.operationType!=="luan_chuyen_di"&&w.operationType!=="luan_chuyen_den");
   const allVisible=visibleRows.length>0&&visibleRows.every(w=>selectedRows.includes(w.id));
@@ -2584,15 +2600,15 @@ function WarehouseHub({ warehouse = [], assets = [], projects = [], settings = {
   return <div className="aa-fade">
     <div className="flex items-start justify-between mb-4 gap-4"><div><h1 className="aa-display text-xl font-semibold">Kho — Nhập / Xuất / Tồn</h1><div className="text-[12px] mt-1" style={{color:TOKENS.muted}}>Quản lý phiếu nhiều mã tài sản, loại nghiệp vụ, luân chuyển, sửa chữa và báo cáo chi tiết.</div></div><div className="flex gap-2 flex-wrap justify-end"><Btn icon={Download} onClick={downloadTemplate}>Tải mẫu Excel</Btn>{isAdmin&&<label className="inline-flex items-center gap-1.5 rounded-md font-medium px-3 py-1.5 text-[13px] cursor-pointer" style={{background:TOKENS.info,color:"white"}}><UploadCloud size={14}/>Đổ phiếu Excel<input type="file" accept=".xlsx,.xls" className="hidden" onChange={e=>{const file=e.target.files?.[0];if(file)onImport?.(file);e.target.value=""}}/></label>}</div></div>
     <div className="rounded-lg overflow-hidden" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><div className="flex border-b overflow-x-auto" style={{borderColor:TOKENS.border}}>{tabBtn("in","Nhập kho",<PackagePlus size={15}/>)}{tabBtn("out","Xuất kho",<PackageMinus size={15}/>)}{tabBtn("transfer","Chuyển kho",<ArrowLeftRight size={15}/>)}{tabBtn("report","Tổng hợp N-X-T",<ClipboardList size={15}/>)}{tabBtn("txdetail","Chi tiết N-X-T",<FileSpreadsheet size={15}/>)}{tabBtn("fifolink","Đối chiếu FIFO nhập → xuất",<Archive size={15}/>)}{tabBtn("lotdetail","Tồn theo phiếu nhập",<Archive size={15}/>)}</div><div className="p-4">
-      {(tab==="in"||tab==="out"||tab==="transfer")&&<><div className="flex items-center justify-between gap-3 mb-3"><div className="flex gap-2"><Btn kind="primary" icon={Plus} onClick={()=>onAdd?.(tab==="transfer"?"transfer":visibleType)}>{tab==="in"?"Lập phiếu nhập":tab==="out"?"Lập phiếu xuất":"Lập phiếu chuyển kho"}</Btn>{visibleRows.length>0&&<label className="inline-flex items-center gap-1.5 text-[12px]"><input type="checkbox" checked={allVisible} onChange={()=>setSelectedRows(allVisible?selectedRows.filter(id=>!visibleRows.some(w=>w.id===id)):[...new Set([...selectedRows,...visibleRows.map(w=>w.id)])])}/> Chọn tất cả trang lọc</label>}</div><div className="flex gap-2 items-center"><input className={inputCls} style={{...inputStyle,maxWidth:360}} placeholder="Tìm phiếu, tài sản, NCC, diễn giải..." value={query} onChange={e=>setQuery(e.target.value)}/>{selectedEditRow&&<Btn kind="info" icon={Pencil} onClick={()=>onEditRow?.(selectedEditRow)}>Sửa phiếu</Btn>}{selectedRows.length>1&&<span className="text-[11px]" style={{color:TOKENS.muted}}>Chọn đúng 1 dòng để sửa cả phiếu</span>}{isAdmin&&selectedRows.length>0&&<Btn kind="danger" icon={Trash2} onClick={()=>{onDeleteRows?.(selectedRows);setSelectedRows([])}}>Xóa {selectedRows.length} dòng</Btn>}</div></div><WarehouseFilter {...filterProps}/><div className="text-[11px] mb-2" style={{color:TOKENS.muted}}><b>Cách sửa phiếu:</b> tích chọn đúng 1 dòng → bấm <b>Sửa phiếu</b>. <b>Chưa ghi sổ</b> là bản nháp tự lưu và không tham gia tồn/FIFO.</div>{filter.status!=="posted"&&visibleDrafts.length>0&&<div className="rounded-lg overflow-auto mb-3" style={{border:`1px solid ${TOKENS.gold}55`}}><table className="w-full min-w-[1050px]"><thead><tr><Th>Trạng thái</Th><Th>Loại</Th><Th>Số chứng từ</Th><Th>Công trình/Kho</Th><Th>Đối tượng/NCC</Th><Th>Cập nhật</Th><Th>Thao tác</Th></tr></thead><tbody>{visibleDrafts.map(d=>{const df=d.form||{};return <tr key={d.id} className="aa-row"><Td><span className="px-2 py-1 rounded text-[11px]" style={{background:TOKENS.goldSoft,color:TOKENS.gold}}>Chưa ghi sổ</span></Td><Td>{df.type==="nhap"?"Phiếu nhập":df.operationType==="luan_chuyen_di"?"Chuyển kho":"Phiếu xuất"}</Td><Td><Tag>{df.voucherNo||"(chưa có số)"}</Tag></Td><Td>{projectMap[df.projectId]?.name||"—"}</Td><Td>{df.supplier||"—"}</Td><Td>{d.updatedAt?new Date(d.updatedAt).toLocaleString("vi-VN"):"—"}</Td><Td><div className="flex gap-2"><Btn small kind="info" icon={Pencil} onClick={()=>onAdd?.(df.operationType==="luan_chuyen_di"?"transfer":df.type,d)}>Tiếp tục nhập</Btn><Btn small kind="danger" icon={Trash2} onClick={()=>deleteDraft(d.id)}>Xóa</Btn></div></Td></tr>})}</tbody></table></div>}<div className="rounded-lg overflow-auto" style={{border:`1px solid ${TOKENS.border}`}}><table className="w-full min-w-[2050px]"><thead><tr>{txHeaders.map((h,i)=>i===txHeaders.length-1?<th key={`${i}-${h}`} className="text-[11px] font-medium px-3 py-2 text-left sticky right-0 bg-white z-10" style={{color:TOKENS.muted,borderBottom:`1px solid ${TOKENS.border}`,boxShadow:"-6px 0 10px rgba(16,24,40,.04)"}}>{h}</th>:<Th key={`${i}-${h}`}>{h}</Th>)}</tr></thead><tbody>{visibleRows.map((w,i)=>{const a=assetMap[w.assetId]||{};return <tr key={w.id||`row-${i}`} className="aa-row"><Td><input type="checkbox" checked={selectedRows.includes(w.id)} onChange={e=>setSelectedRows(e.target.checked?[...selectedRows,w.id]:selectedRows.filter(id=>id!==w.id))}/></Td><Td><Tag>{safeText(w.voucherNo,"—")}</Tag></Td><Td mono>{fmtDate(w.date)}</Td><Td>{safeText(w.operationLabel||OPERATION_LABELS[w.operationType],"—")}</Td><Td><Tag>{safeText(w.itemCode||a.code,"—")}</Tag></Td><Td>{safeText(w.itemName||a.name,"—")}</Td><Td>{getLocation(w)}</Td><Td>{safeText(w.counterpartyLocation,"—")}</Td><Td>{safeText(w.unit||a.unit,"Cái")}</Td><Td right mono>{safeNumber(w.quantity)}</Td><Td right mono>{fmtVND(safeNumber(w.unitCost))}</Td><Td right mono>{fmtVND(Number.isFinite(Number(w.total))?Number(w.total):safeNumber(w.quantity)*safeNumber(w.unitCost))}</Td><Td>{safeText(w.supplier||w.repairVendor,"—")}</Td><Td>{safeText(w.receiver,"—")}</Td><Td>{safeText(w.referenceNo,"—")}</Td><Td>{safeText(w.description||w.note,"—")}</Td><td className="px-3 py-2.5 text-[13px] sticky right-0 bg-white" style={{borderBottom:`1px solid ${TOKENS.border}`,boxShadow:"-6px 0 10px rgba(16,24,40,.04)"}}><Btn small kind="info" icon={Pencil} onClick={()=>onEditRow?.(w)}>Sửa phiếu</Btn></td></tr>})}</tbody></table>{!visibleRows.length&&<EmptyState text={tab==="in"?"Chưa có phiếu nhập phù hợp":tab==="out"?"Chưa có phiếu xuất phù hợp":"Chưa có phiếu chuyển kho phù hợp"}/>}</div></>}
+      {(tab==="in"||tab==="out"||tab==="transfer")&&<><div className="flex items-center justify-between gap-3 mb-3"><div className="flex gap-2"><Btn kind="primary" icon={Plus} onClick={()=>onAdd?.(tab==="transfer"?"transfer":visibleType)}>{tab==="in"?"Lập phiếu nhập":tab==="out"?"Lập phiếu xuất":"Lập phiếu chuyển kho"}</Btn>{visibleRows.length>0&&<label className="inline-flex items-center gap-1.5 text-[12px]"><input type="checkbox" checked={allVisible} onChange={()=>setSelectedRows(allVisible?selectedRows.filter(id=>!visibleRows.some(w=>w.id===id)):[...new Set([...selectedRows,...visibleRows.map(w=>w.id)])])}/> Chọn tất cả trang lọc</label>}</div><div className="flex gap-2 items-center"><input className={inputCls} style={{...inputStyle,maxWidth:360}} placeholder="Tìm phiếu, tài sản, NCC, diễn giải..." value={query} onChange={e=>setQuery(e.target.value)}/>{selectedEditRow&&<Btn kind="info" icon={Pencil} onClick={()=>onEditRow?.(selectedEditRow)}>Sửa phiếu</Btn>}{selectedRows.length>1&&<span className="text-[11px]" style={{color:TOKENS.muted}}>Chọn đúng 1 dòng để sửa cả phiếu</span>}{isAdmin&&selectedRows.length>0&&<Btn kind="danger" icon={Trash2} onClick={()=>{onDeleteRows?.(selectedRows);setSelectedRows([])}}>Xóa {selectedRows.length} dòng</Btn>}</div></div><WarehouseFilter {...filterProps}/><div className="text-[11px] mb-2" style={{color:TOKENS.muted}}><b>Cách sửa phiếu:</b> tích chọn đúng 1 dòng → bấm <b>Sửa phiếu</b>. Hệ thống sẽ mở toàn bộ các dòng cùng số phiếu để chỉnh sửa.</div><div className="rounded-lg overflow-auto" style={{border:`1px solid ${TOKENS.border}`}}><table className="w-full min-w-[2050px]"><thead><tr>{txHeaders.map((h,i)=>i===txHeaders.length-1?<th key={`${i}-${h}`} className="text-[11px] font-medium px-3 py-2 text-left sticky right-0 bg-white z-10" style={{color:TOKENS.muted,borderBottom:`1px solid ${TOKENS.border}`,boxShadow:"-6px 0 10px rgba(16,24,40,.04)"}}>{h}</th>:<Th key={`${i}-${h}`}>{h}</Th>)}</tr></thead><tbody>{visibleRows.map((w,i)=>{const a=assetMap[w.assetId]||{};return <tr key={w.id||`row-${i}`} className="aa-row"><Td><input type="checkbox" checked={selectedRows.includes(w.id)} onChange={e=>setSelectedRows(e.target.checked?[...selectedRows,w.id]:selectedRows.filter(id=>id!==w.id))}/></Td><Td><Tag>{safeText(w.voucherNo,"—")}</Tag></Td><Td mono>{fmtDate(w.date)}</Td><Td>{safeText(w.operationLabel||OPERATION_LABELS[w.operationType],"—")}</Td><Td><Tag>{safeText(w.itemCode||a.code,"—")}</Tag></Td><Td>{safeText(w.itemName||a.name,"—")}</Td><Td>{getLocation(w)}</Td><Td>{safeText(w.counterpartyLocation,"—")}</Td><Td>{safeText(w.unit||a.unit,"Cái")}</Td><Td right mono>{safeNumber(w.quantity)}</Td><Td right mono>{fmtVND(safeNumber(w.unitCost))}</Td><Td right mono>{fmtVND(Number.isFinite(Number(w.total))?Number(w.total):safeNumber(w.quantity)*safeNumber(w.unitCost))}</Td><Td>{safeText(w.supplier||w.repairVendor,"—")}</Td><Td>{safeText(w.receiver,"—")}</Td><Td>{safeText(w.referenceNo,"—")}</Td><Td>{safeText(w.description||w.note,"—")}</Td><td className="px-3 py-2.5 text-[13px] sticky right-0 bg-white" style={{borderBottom:`1px solid ${TOKENS.border}`,boxShadow:"-6px 0 10px rgba(16,24,40,.04)"}}><Btn small kind="info" icon={Pencil} onClick={()=>onEditRow?.(w)}>Sửa phiếu</Btn></td></tr>})}</tbody></table>{!visibleRows.length&&<EmptyState text={tab==="in"?"Chưa có phiếu nhập phù hợp":tab==="out"?"Chưa có phiếu xuất phù hợp":"Chưa có phiếu chuyển kho phù hợp"}/>}</div></>}
       {(tab==="report"||tab==="txdetail"||tab==="fifolink"||tab==="lotdetail")&&<><div className="rounded-lg p-4 mb-4" style={{background:TOKENS.paper,border:`1px solid ${TOKENS.border}`}}><WarehouseFilter {...filterProps}/><div className="flex gap-2 items-end justify-between"><label className="text-[11px]" style={{color:TOKENS.muted}}>Đến ngày<input type="date" className={inputCls} style={{...inputStyle,width:165}} value={asOf} onChange={e=>setFilter({...filter,asOfDate:e.target.value})}/></label><div>{tab==="report"&&<ExportBar onExcel={()=>onExportExcel("bao-cao-tong-hop-nhap-xuat-ton",reportHeaders,reportRows)} onPdf={()=>onExportPdf(`Báo cáo tổng hợp nhập xuất tồn đến ${fmtDate(asOf)}`,reportHeaders,reportRows)}/>} {tab==="txdetail"&&<ExportBar onExcel={()=>onExportExcel("bao-cao-chi-tiet-nhap-xuat-ton-theo-phieu",txDetailHeaders,txDetailRows)} onPdf={()=>onExportPdf("Báo cáo chi tiết nhập xuất tồn theo phiếu",txDetailHeaders,txDetailRows)}/>} {tab==="fifolink"&&<ExportBar onExcel={()=>onExportExcel("bao-cao-doi-chieu-fifo-nhap-xuat-theo-cong-trinh",fifoLinkHeaders,fifoLinkRows)} onPdf={()=>onExportPdf("Báo cáo đối chiếu FIFO nhập - xuất theo công trình",fifoLinkHeaders,fifoLinkRows)}/>} {tab==="lotdetail"&&<ExportBar onExcel={()=>onExportExcel("bao-cao-ton-chi-tiet-theo-phieu-nhap",lotHeaders,lotRows)} onPdf={()=>onExportPdf("Báo cáo tồn chi tiết theo phiếu nhập",lotHeaders,lotRows)}/>}</div></div></div>{tab==="report"&&<ReportTable headers={reportHeaders} rows={reportRows} moneyCols={[10]} empty="Không có dữ liệu tổng hợp"/>}{tab==="txdetail"&&<ReportTable headers={txDetailHeaders} rows={txDetailRows} empty="Không có giao dịch theo điều kiện lọc"/>}{tab==="fifolink"&&<><div className="text-[12px] mb-2 rounded-md p-3" style={{background:TOKENS.brandSoft,color:TOKENS.ink}}>FIFO được tính <b>riêng cho từng Kho/Công trình</b>. Phiếu xuất của Công trình A không được lấy lô nhập của Công trình B. Nếu một phiếu xuất lấy từ nhiều phiếu nhập, các số phiếu nhập được nối bằng dấu <b> - </b>. Lô chưa xuất để trống thông tin phiếu xuất.</div><ReportTable headers={fifoLinkHeaders} rows={fifoLinkRows} moneyCols={[14]} empty="Không có dữ liệu đối chiếu FIFO"/></>}{tab==="lotdetail"&&<><div className="text-[12px] mb-2" style={{color:TOKENS.muted}}>Theo FIFO: thể hiện tài sản còn tồn được nhập <b>ngày nào, phiếu nhập nào</b> và diễn giải nghiệp vụ.</div><ReportTable headers={lotHeaders} rows={lotRows} moneyCols={[13,14]} empty="Không có tồn theo phiếu nhập"/></>}</>}
     </div></div>
   </div>;
 }
 
 function ReportTable({headers,rows,moneyCols=[],empty}){return <div className="rounded-lg overflow-auto" style={{border:`1px solid ${TOKENS.border}`}}><table className="w-full min-w-[1450px]"><thead><tr>{headers.map(h=><Th key={h}>{h}</Th>)}</tr></thead><tbody>{rows.map((r,i)=><tr key={i} className="aa-row">{r.map((c,j)=><Td key={j} mono={typeof c==="number"} right={typeof c==="number"}>{moneyCols.includes(j)?fmtVND(c):c}</Td>)}</tr>)}</tbody></table>{!rows.length&&<EmptyState text={empty||"Không có dữ liệu"}/>}</div>}
-function WarehouseFilter({filter,setFilter,categories=[],groups=[],ownerships=[],projects=[],locations=[],suppliers=[],operations=[],showStatus=false}){const set=k=>e=>setFilter({...filter,[k]:e.target.value});const opts=a=>(Array.isArray(a)?a:[]).map(safeText).filter(Boolean);return <div className="flex flex-wrap gap-2 mb-3">{showStatus&&<select className={inputCls} style={{...inputStyle,width:155}} value={filter.status||"all"} onChange={set("status")}><option value="all">Tất cả</option><option value="posted">Đã ghi sổ</option><option value="draft">Chưa ghi sổ</option></select>}<select className={inputCls} style={{...inputStyle,width:210}} value={safeText(filter.operationType)} onChange={set("operationType")}><option value="">Tất cả loại nghiệp vụ</option>{(Array.isArray(operations)?operations:[]).filter(Boolean).map((x,i)=><option key={safeText(x.id,`op-${i}`)} value={safeText(x.id)}>{safeText(x.label,x.id)}</option>)}</select><select className={inputCls} style={{...inputStyle,width:175}} value={safeText(filter.category)} onChange={set("category")}><option value="">Tất cả loại tài sản</option>{opts(categories).map((x,i)=><option key={`${i}-${x}`} value={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:175}} value={safeText(filter.group)} onChange={set("group")}><option value="">Tất cả nhóm</option>{opts(groups).map((x,i)=><option key={`${i}-${x}`} value={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:155}} value={safeText(filter.ownership)} onChange={set("ownership")}><option value="">Tất cả nguồn gốc</option>{opts(ownerships).map((x,i)=><option key={`${i}-${x}`} value={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:210}} value={safeText(filter.projectId)} onChange={set("projectId")}><option value="">Tất cả công trình</option>{(Array.isArray(projects)?projects:[]).filter(Boolean).map((p,i)=><option key={safeText(p.id,`p-${i}`)} value={safeText(p.id)}>{safeText(p.name,`Công trình ${i+1}`)}</option>)}</select><select className={inputCls} style={{...inputStyle,width:220}} value={safeText(filter.locationName)} onChange={set("locationName")}><option value="">Tất cả kho / công trình</option>{opts(locations).map((x,i)=><option key={`${i}-${x}`} value={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:220}} value={safeText(filter.supplier)} onChange={set("supplier")}><option value="">Tất cả nhà cung cấp / đơn vị sửa</option>{opts(suppliers).map((x,i)=><option key={`${i}-${x}`} value={x}>{x}</option>)}</select></div>;}
-function SupplierSearchPicker({suppliers,value,onPick,onTextInput}){const selected=suppliers.find(s=>s.name===value||s.id===value);const[q,setQ]=useState(selected?.name||value||"");const[open,setOpen]=useState(false);const inputRef=useRef(null);const matches=suppliers.filter(s=>normalizeText(`${s.code||""} ${s.name||""} ${s.taxCode||""} ${s.phone||""}`).includes(normalizeText(q))).slice(0,12);return <div className="relative"><input ref={inputRef} className={inputCls} style={inputStyle} defaultValue={selected?.name||value||""} onFocus={()=>setOpen(true)} onInput={e=>{const v=e.currentTarget.value;setQ(v);onTextInput?.(v);setOpen(true)}} onBlur={e=>{const v=e.currentTarget.value;setTimeout(()=>{onPick(v);setOpen(false)},120)}} placeholder="Gõ tên, mã NCC, MST..."/>{open&&q&&<div className="absolute z-50 left-0 right-0 top-full mt-1 max-h-56 overflow-auto rounded-md bg-white shadow-lg" style={{border:`1px solid ${TOKENS.border}`}}>{matches.map(s=><button type="button" key={s.id} className="block w-full text-left px-3 py-2 text-[12px] hover:bg-red-50" onMouseDown={e=>e.preventDefault()} onClick={()=>{onPick(s.name);onTextInput?.(s.name);if(inputRef.current)inputRef.current.value=s.name;setQ(s.name);setOpen(false)}}><b>{s.code||"NCC"}</b> — {s.name}<div className="text-[10px]" style={{color:TOKENS.muted}}>{s.taxCode?`MST: ${s.taxCode}`:""}{s.phone?` · ${s.phone}`:""}</div></button>)}{!matches.length&&<div className="px-3 py-2 text-[12px]" style={{color:TOKENS.muted}}>Không tìm thấy trong danh mục — vẫn có thể dùng tên vừa nhập</div>}</div>}</div>}
+function WarehouseFilter({filter,setFilter,categories=[],groups=[],ownerships=[],projects=[],locations=[],suppliers=[],operations=[]}){const set=k=>e=>setFilter({...filter,[k]:e.target.value});const opts=a=>(Array.isArray(a)?a:[]).map(safeText).filter(Boolean);return <div className="flex flex-wrap gap-2 mb-3"><select className={inputCls} style={{...inputStyle,width:210}} value={safeText(filter.operationType)} onChange={set("operationType")}><option value="">Tất cả loại nghiệp vụ</option>{(Array.isArray(operations)?operations:[]).filter(Boolean).map((x,i)=><option key={safeText(x.id,`op-${i}`)} value={safeText(x.id)}>{safeText(x.label,x.id)}</option>)}</select><select className={inputCls} style={{...inputStyle,width:175}} value={safeText(filter.category)} onChange={set("category")}><option value="">Tất cả loại tài sản</option>{opts(categories).map((x,i)=><option key={`${i}-${x}`} value={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:175}} value={safeText(filter.group)} onChange={set("group")}><option value="">Tất cả nhóm</option>{opts(groups).map((x,i)=><option key={`${i}-${x}`} value={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:155}} value={safeText(filter.ownership)} onChange={set("ownership")}><option value="">Tất cả nguồn gốc</option>{opts(ownerships).map((x,i)=><option key={`${i}-${x}`} value={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:210}} value={safeText(filter.projectId)} onChange={set("projectId")}><option value="">Tất cả công trình</option>{(Array.isArray(projects)?projects:[]).filter(Boolean).map((p,i)=><option key={safeText(p.id,`p-${i}`)} value={safeText(p.id)}>{safeText(p.name,`Công trình ${i+1}`)}</option>)}</select><select className={inputCls} style={{...inputStyle,width:220}} value={safeText(filter.locationName)} onChange={set("locationName")}><option value="">Tất cả kho / công trình</option>{opts(locations).map((x,i)=><option key={`${i}-${x}`} value={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:220}} value={safeText(filter.supplier)} onChange={set("supplier")}><option value="">Tất cả nhà cung cấp / đơn vị sửa</option>{opts(suppliers).map((x,i)=><option key={`${i}-${x}`} value={x}>{x}</option>)}</select></div>;}
+function SupplierSearchPicker({suppliers,value,onPick}){const selected=suppliers.find(s=>s.name===value||s.id===value);const[q,setQ]=useState(selected?.name||value||"");const[open,setOpen]=useState(false);const matches=suppliers.filter(s=>normalizeText(`${s.code||""} ${s.name||""} ${s.taxCode||""} ${s.phone||""}`).includes(normalizeText(q))).slice(0,12);return <div className="relative"><input className={inputCls} style={inputStyle} value={q} onFocus={()=>setOpen(true)} onChange={e=>{setQ(e.target.value);onPick(e.target.value);setOpen(true)}} placeholder="Gõ tên, mã NCC, MST..."/>{open&&q&&<div className="absolute z-50 left-0 right-0 top-full mt-1 max-h-56 overflow-auto rounded-md bg-white shadow-lg" style={{border:`1px solid ${TOKENS.border}`}}>{matches.map(s=><button type="button" key={s.id} className="block w-full text-left px-3 py-2 text-[12px] hover:bg-red-50" onClick={()=>{onPick(s.name);setQ(s.name);setOpen(false)}}><b>{s.code||"NCC"}</b> — {s.name}<div className="text-[10px]" style={{color:TOKENS.muted}}>{s.taxCode?`MST: ${s.taxCode}`:""}{s.phone?` · ${s.phone}`:""}</div></button>)}{!matches.length&&<div className="px-3 py-2 text-[12px]" style={{color:TOKENS.muted}}>Không tìm thấy trong danh mục — vẫn có thể dùng tên vừa nhập</div>}</div>}</div>}
 
 function SupplierCatalog({suppliers,isAdmin,onAdd,onEdit,onDeleteMany,onImportExcel,onExportExcel,onExportPdf}){
   const[q,setQ]=useState(""),[selected,setSelected]=useState([]),[editing,setEditing]=useState(null),fileRef=useRef(null);
@@ -2611,58 +2627,14 @@ function AssetSearchPicker({assets,value,onPick}) {
   const matches=assets.filter(a=>normalizeText(`${a.code} ${a.name} ${a.serial||""}`).includes(normalizeText(q))).slice(0,10);
   return <div className="relative"><input className={inputCls} style={inputStyle} value={q} onFocus={()=>setOpen(true)} onChange={e=>{setQ(e.target.value);setOpen(true)}} placeholder="Gõ tên, mã hoặc serial..."/>{open&&q&&<div className="absolute z-50 left-0 right-0 top-full mt-1 max-h-56 overflow-auto rounded-md bg-white shadow-lg" style={{border:`1px solid ${TOKENS.border}`}}>{matches.map(a=><button type="button" key={a.id} className="block w-full text-left px-3 py-2 text-[12px] hover:bg-red-50" onClick={()=>{onPick(a);setQ(`${a.code} — ${a.name}`);setOpen(false)}}><b>{a.code}</b> — {a.name}<div className="text-[10px]" style={{color:TOKENS.muted}}>{a.unit||"Cái"} · {a.category||"Khác"} · {a.ownership||"Công ty"}</div></button>)}{!matches.length&&<div className="px-3 py-2 text-[12px]" style={{color:TOKENS.muted}}>Không tìm thấy tài sản</div>}</div>}</div>;
 }
-
-function AttachmentPicker({ value = [], onChange }) {
-  const files=Array.isArray(value)?value:[];
-  const pick=async(e)=>{const selected=Array.from(e.target.files||[]);const allowed=/\.(jpe?g|png|pdf|xlsx?|docx?)$/i;const next=[];for(const file of selected){if(!allowed.test(file.name)){alert(`Không hỗ trợ file: ${file.name}`);continue;}if(file.size>10*1024*1024){alert(`File ${file.name} vượt quá 10MB`);continue;}const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file)});next.push({id:uid("att"),name:file.name,type:file.type||"application/octet-stream",size:file.size,dataUrl,uploadedAt:nowIso()});}onChange?.([...files,...next]);e.target.value="";};
-  const download=a=>{if(!a?.dataUrl)return;const el=document.createElement("a");el.href=a.dataUrl;el.download=a.name||"tai-lieu";document.body.appendChild(el);el.click();el.remove();};
-  const open=a=>{if(!a?.dataUrl)return;const previewable=/^(image\/|application\/pdf)/i.test(a.type||"")||/\.(jpe?g|png|pdf)$/i.test(a.name||"");if(!previewable){download(a);return;}const el=document.createElement("a");el.href=a.dataUrl;el.target="_blank";el.rel="noopener noreferrer";document.body.appendChild(el);el.click();el.remove();};
-  return <div className="rounded-md p-2" style={{border:`1px dashed ${TOKENS.border}`}}><label className="inline-flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer text-[12px] font-medium" style={{background:TOKENS.paper}}><UploadCloud size={14}/>Đính kèm ảnh / PDF / Excel / Word<input type="file" multiple accept=".jpg,.jpeg,.png,.pdf,.xls,.xlsx,.doc,.docx" className="hidden" onChange={pick}/></label>{files.length>0&&<div className="mt-2 space-y-1">{files.map(a=><div key={a.id||a.name} className="flex items-center justify-between gap-2 text-[11px]"><span className="truncate">{a.name} · {Math.ceil((a.size||0)/1024)} KB</span><span className="flex gap-2"><button type="button" onClick={()=>open(a)}>{/\.(docx?|xlsx?)$/i.test(a.name||"")?"Mở/Tải":"Xem"}</button><button type="button" onClick={()=>download(a)}>Tải</button><button type="button" onClick={()=>onChange?.(files.filter(x=>x!==a))} style={{color:TOKENS.danger}}>Xóa</button></span></div>)}</div>}</div>;
-}
-
-function RepairCompleteModal({ repair, asset, projects, onClose, onSubmit }){
-  const [f,setF]=useState({result:repair?.assetId?"return":"external_return",projectId:repair?.sourceProjectId||"",completeDate:nowIso().slice(0,10),returnVoucherNo:"",quantity:Number(repair?.quantity||1),cost:Number(repair?.cost||0),receiver:"",note:"",liquidationValue:0,attachments:[]});
-  const set=k=>e=>{const v=e.target.value;setF(p=>({...p,[k]:v}))};
-  return <Modal title={`Hoàn thành sửa chữa — ${asset?.code||""}`} onClose={onClose} wide><div className="rounded-md p-3 mb-3 text-[12px]" style={{background:TOKENS.paper,border:`1px solid ${TOKENS.border}`}}>Phiếu xuất sửa chữa: <b>{repair?.warehouseVoucherNo||"—"}</b> · Công trình/Kho xuất: <b>{repair?.sourceLocation||"—"}</b></div><Field label="Kết quả sau sửa chữa"><select className={inputCls} style={inputStyle} value={f.result} onChange={set("result")}>{!repair?.assetId&&<option value="external_return">Trả lại đơn vị / chủ sở hữu</option>}<option value="return">Nhập thu hồi về Công trình/Kho</option>{repair?.assetId&&<option value="liquidation">Chuyển sang Thanh lý</option>}</select></Field>{f.result==="external_return"?<div className="rounded-md p-3 mb-3 text-[12px]" style={{background:TOKENS.infoSoft}}>Thiết bị ngoài hệ thống sẽ được ghi nhận hoàn thành và trả lại đơn vị/chủ sở hữu; không phát sinh phiếu nhập kho.</div>:f.result==="return"?<><Field label="Công trình/Kho nhận *"><select className={inputCls} style={inputStyle} value={f.projectId} onChange={set("projectId")}><option value="">Chọn công trình/kho</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></Field><div className="grid grid-cols-2 gap-3"><Field label="Số phiếu nhập thu hồi"><input className={inputCls} style={inputStyle} value={f.returnVoucherNo} onChange={set("returnVoucherNo")} placeholder="Để trống để tự sinh"/></Field><Field label="Số lượng thu hồi"><input type="number" min="0.01" step="0.01" className={inputCls} style={inputStyle} value={f.quantity} onChange={set("quantity")}/></Field></div></>:<Field label="Giá trị thanh lý"><input type="number" min="0" className={inputCls} style={inputStyle} value={f.liquidationValue} onChange={set("liquidationValue")}/></Field>}<div className="grid grid-cols-2 gap-3"><Field label="Ngày hoàn thành"><input type="date" className={inputCls} style={inputStyle} value={f.completeDate} onChange={set("completeDate")}/></Field><Field label="Chi phí sửa chữa"><input type="number" min="0" className={inputCls} style={inputStyle} value={f.cost} onChange={set("cost")}/></Field></div><Field label="Diễn giải / kết quả"><textarea className={inputCls} style={inputStyle} value={f.note} onChange={set("note")}/></Field><Field label="Chứng từ sửa chữa"><AttachmentPicker value={f.attachments} onChange={attachments=>setF(p=>({...p,attachments}))}/></Field><div className="flex justify-end gap-2 mt-3"><Btn onClick={onClose}>Hủy</Btn><Btn kind="primary" icon={Save} onClick={()=>onSubmit(f)}>{f.result==="external_return"?"Hoàn thành & trả chủ sở hữu":f.result==="return"?"Hoàn thành & lập phiếu nhập thu hồi":"Hoàn thành & chuyển thanh lý"}</Btn></div></Modal>;
-}
-
-function RepairEditModal({repair,onClose,onSubmit}){
-  const [f,setF]=useState({description:repair?.description||"",vendor:repair?.vendor||"",cost:Number(repair?.cost||0),ownerCompany:repair?.ownerCompany||"",serviceLocation:repair?.serviceLocation||"",attachments:Array.isArray(repair?.attachments)?repair.attachments:[]});const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
-  return <Modal title="Cập nhật hồ sơ sửa chữa" onClose={onClose} wide><div className="grid grid-cols-2 gap-3"><Field label="Đơn vị/chủ sở hữu"><input className={inputCls} style={inputStyle} value={f.ownerCompany} onChange={set("ownerCompany")}/></Field><Field label="Máy/Công trình đang phục vụ"><input className={inputCls} style={inputStyle} value={f.serviceLocation} onChange={set("serviceLocation")}/></Field><Field label="Đơn vị sửa chữa"><input className={inputCls} style={inputStyle} value={f.vendor} onChange={set("vendor")}/></Field><Field label="Chi phí sửa chữa"><input type="number" min="0" className={inputCls} style={inputStyle} value={f.cost} onChange={set("cost")}/></Field></div><Field label="Tình trạng / nội dung sửa"><textarea rows={3} className={inputCls} style={inputStyle} value={f.description} onChange={set("description")}/></Field><Field label="Chứng từ"><AttachmentPicker value={f.attachments} onChange={attachments=>setF(p=>({...p,attachments}))}/></Field><div className="flex justify-end gap-2 mt-3"><Btn onClick={onClose}>Hủy</Btn><Btn kind="primary" icon={Save} onClick={()=>onSubmit(f)}>Lưu cập nhật</Btn></div></Modal>;
-}
-
-function RepairHistoryEditModal({ repair, assets, onClose, onSubmit }) {
-  const internal=!!repair?.assetId;
-  const [f,setF]=useState({assetId:repair?.assetId||"",externalCode:repair?.externalCode||"",externalName:repair?.externalName||"",ownerCompany:repair?.ownerCompany||"",serviceLocation:repair?.serviceLocation||"",date:repair?.date||nowIso().slice(0,10),completeDate:repair?.completeDate||"",description:repair?.description||"",vendor:repair?.vendor||"",cost:Number(repair?.cost||0),status:repair?.status||"Đang sửa",result:repair?.result||"",returnVoucherNo:repair?.returnVoucherNo||"",returnLocation:repair?.returnLocation||""});
-  const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
-  return <Modal title="Điều chỉnh lịch sử sửa chữa" onClose={onClose} wide><div className="rounded-md p-3 mb-3 text-[12px]" style={{background:TOKENS.goldSoft,color:TOKENS.gold}}>Dùng khi ghi sai mã vật tư/thiết bị hoặc thông tin hồ sơ. Thao tác này chỉ sửa hồ sơ lịch sử, không tự thay đổi số lượng tồn của các phiếu kho đã phát sinh.</div><Field label="Tài sản trong danh mục"><select className={inputCls} style={inputStyle} value={f.assetId} onChange={set("assetId")}><option value="">Thiết bị ngoài hệ thống / không chọn mã</option>{assets.map(a=><option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}</select></Field>{!f.assetId&&<div className="grid grid-cols-2 gap-3"><Field label="Mã/Serial thiết bị"><input className={inputCls} style={inputStyle} value={f.externalCode} onChange={set("externalCode")}/></Field><Field label="Tên thiết bị"><input className={inputCls} style={inputStyle} value={f.externalName} onChange={set("externalName")}/></Field></div>}<div className="grid grid-cols-2 gap-3"><Field label="Ngày gửi sửa"><input type="date" className={inputCls} style={inputStyle} value={f.date} onChange={set("date")}/></Field><Field label="Ngày hoàn thành"><input type="date" className={inputCls} style={inputStyle} value={f.completeDate} onChange={set("completeDate")}/></Field><Field label="Đơn vị/chủ sở hữu"><input className={inputCls} style={inputStyle} value={f.ownerCompany} onChange={set("ownerCompany")}/></Field><Field label="Máy/Công trình phục vụ"><input className={inputCls} style={inputStyle} value={f.serviceLocation} onChange={set("serviceLocation")}/></Field><Field label="Đơn vị sửa chữa"><input className={inputCls} style={inputStyle} value={f.vendor} onChange={set("vendor")}/></Field><Field label="Chi phí sửa chữa"><input type="number" min="0" className={inputCls} style={inputStyle} value={f.cost} onChange={set("cost")}/></Field><Field label="Trạng thái"><select className={inputCls} style={inputStyle} value={f.status} onChange={set("status")}><option>Đang sửa</option><option>Hoàn thành</option></select></Field><Field label="Kết quả"><input className={inputCls} style={inputStyle} value={f.result} onChange={set("result")} placeholder="Nhập thu hồi / Thanh lý / Trả chủ sở hữu..."/></Field><Field label="Phiếu nhập thu hồi"><input className={inputCls} style={inputStyle} value={f.returnVoucherNo} onChange={set("returnVoucherNo")}/></Field><Field label="Nơi nhận"><input className={inputCls} style={inputStyle} value={f.returnLocation} onChange={set("returnLocation")}/></Field></div><Field label="Tình trạng / nội dung sửa"><textarea rows={3} className={inputCls} style={inputStyle} value={f.description} onChange={set("description")}/></Field><div className="flex justify-end gap-2 mt-3"><Btn onClick={onClose}>Hủy</Btn><Btn kind="primary" icon={Save} onClick={()=>onSubmit(f)}>Lưu điều chỉnh</Btn></div></Modal>;
-}
-
-function DirectRepairModal({assets=[],projects=[],onClose,onSubmit}){
-  const [f,setF]=useState({source:"external",assetId:"",externalCode:"",externalName:"",ownerCompany:"",serviceLocation:"",projectId:"",date:nowIso().slice(0,10),description:"",vendor:"",cost:0,quantity:1,unit:"Cái",attachments:[]});const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
-  return <Modal title="Thêm hồ sơ sửa chữa" onClose={onClose} wide><Field label="Nguồn tài sản"><select className={inputCls} style={inputStyle} value={f.source} onChange={set("source")}><option value="external">Thiết bị ngoài hệ thống / máy của công ty khác</option><option value="internal">Tài sản có trong hệ thống</option></select></Field>{f.source==="internal"?<Field label="Tài sản"><select className={inputCls} style={inputStyle} value={f.assetId} onChange={set("assetId")}><option value="">Chọn tài sản</option>{assets.map(a=><option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}</select></Field>:<div className="grid grid-cols-2 gap-3"><Field label="Mã/Serial thiết bị"><input className={inputCls} style={inputStyle} value={f.externalCode} onChange={set("externalCode")}/></Field><Field label="Tên thiết bị *"><input className={inputCls} style={inputStyle} value={f.externalName} onChange={set("externalName")}/></Field><Field label="Công ty / đơn vị sở hữu"><input className={inputCls} style={inputStyle} value={f.ownerCompany} onChange={set("ownerCompany")}/></Field><Field label="Máy / công trình đang phục vụ"><input className={inputCls} style={inputStyle} value={f.serviceLocation} onChange={set("serviceLocation")}/></Field></div>}<div className="grid grid-cols-2 gap-3"><Field label="Công trình/Kho liên quan"><select className={inputCls} style={inputStyle} value={f.projectId} onChange={set("projectId")}><option value="">Không bắt buộc</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></Field><Field label="Ngày nhận/gửi sửa"><input type="date" className={inputCls} style={inputStyle} value={f.date} onChange={set("date")}/></Field><Field label="Đơn vị sửa chữa"><input className={inputCls} style={inputStyle} value={f.vendor} onChange={set("vendor")}/></Field><Field label="Chi phí dự kiến/đã phát sinh"><input type="number" min="0" className={inputCls} style={inputStyle} value={f.cost} onChange={set("cost")}/></Field></div><Field label="Tình trạng hư hỏng / nội dung sửa"><textarea rows={3} className={inputCls} style={inputStyle} value={f.description} onChange={set("description")}/></Field><Field label="Tài liệu kèm theo"><AttachmentPicker value={f.attachments} onChange={attachments=>setF(p=>({...p,attachments}))}/></Field><div className="flex justify-end gap-2 mt-3"><Btn onClick={onClose}>Hủy</Btn><Btn kind="primary" icon={Save} onClick={()=>onSubmit({...f,assetId:f.source==="internal"?f.assetId:""})}>Lưu hồ sơ sửa chữa</Btn></div></Modal>;
-}
-
-function DocumentModal({assets=[],projects=[],onClose,onSubmit}){
-  const types=["Biên bản bàn giao","Biên bản thu hồi","Biên bản kiểm kê","Biên bản thanh lý","Hóa đơn","Phiếu đề nghị sửa chữa","Báo giá","Hợp đồng","Hình ảnh","Tài liệu khác"];
-  const [f,setF]=useState({type:types[0],referenceNo:"",date:nowIso().slice(0,10),projectId:"",assetId:"",content:"",attachments:[]});const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
-  return <Modal title="Thêm biên bản / tài liệu" onClose={onClose} wide><div className="grid grid-cols-2 gap-3"><Field label="Loại tài liệu"><select className={inputCls} style={inputStyle} value={f.type} onChange={set("type")}>{types.map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Số tài liệu / tham chiếu"><input className={inputCls} style={inputStyle} value={f.referenceNo} onChange={set("referenceNo")}/></Field><Field label="Ngày tài liệu"><input type="date" className={inputCls} style={inputStyle} value={f.date} onChange={set("date")}/></Field><Field label="Công trình/Kho"><select className={inputCls} style={inputStyle} value={f.projectId} onChange={set("projectId")}><option value="">Không bắt buộc</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></Field><Field label="Tài sản"><select className={inputCls} style={inputStyle} value={f.assetId} onChange={set("assetId")}><option value="">Không bắt buộc</option>{assets.map(a=><option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}</select></Field></div><Field label="Diễn giải"><textarea rows={3} className={inputCls} style={inputStyle} value={f.content} onChange={set("content")}/></Field><Field label="File tài liệu *"><AttachmentPicker value={f.attachments} onChange={attachments=>setF(p=>({...p,attachments}))}/></Field><div className="flex justify-end gap-2 mt-3"><Btn onClick={onClose}>Hủy</Btn><Btn kind="primary" icon={Save} onClick={()=>onSubmit(f)}>Lưu tài liệu</Btn></div></Modal>;
-}
-
-function WarehouseTxModal({ assets, projects, suppliers = [], onClose, onSubmit, title, fixedType, fixedOperation = "", initialData = null, draftId = null, submitLabel = "Lưu chứng từ" }) {
+function WarehouseTxModal({ assets, projects, suppliers = [], onClose, onSubmit, title, fixedType, fixedOperation = "", initialData = null, submitLabel = "Lưu chứng từ" }) {
   const blank=()=>({id:uid("line"),assetId:"",quantity:1,unitCost:0});
   const initialOperation=fixedOperation || initialData?.operationType || (fixedType==="xuat"?"su_dung_cong_trinh":"mua_moi");
-  const defaultForm={type:fixedType||initialData?.type||"nhap",operationType:initialOperation,voucherNo:"",date:nowIso().slice(0,10),receiver:"",supplier:"",description:"",locationType:"project",warehouseName:"",projectId:"",counterpartyLocationType:"project",counterpartyProjectId:"",counterpartyWarehouseName:"",repairVendor:"",note:"",address:"",referenceNo:"",attachedDoc:"",attachments:[],transportPerson:"",vehicle:"",orderNo:"",items:Array.from({length:8},blank)};
+  const defaultForm={type:fixedType||initialData?.type||"nhap",operationType:initialOperation,voucherNo:"",date:nowIso().slice(0,10),documentDate:nowIso().slice(0,10),receiver:"",supplier:"",description:"",locationType:"project",warehouseName:"Kho trung tâm",projectId:"",counterpartyLocationType:"project",counterpartyProjectId:"",counterpartyWarehouseName:"",repairVendor:"",note:"",address:"",referenceNo:"",attachedDoc:"",transportPerson:"",vehicle:"",orderNo:"",items:Array.from({length:8},blank)};
   const [f,setF]=useState(()=>({...defaultForm,...(initialData||{}),type:fixedType||initialData?.type||defaultForm.type,operationType:fixedOperation||initialData?.operationType||defaultForm.operationType,items:Array.isArray(initialData?.items)&&initialData.items.length?initialData.items.map(x=>({...x,id:x.id||uid("line")})):defaultForm.items}));
-  const draftKeyRef=useRef(draftId||uid("draft"));
-  const voucherRef=useRef(null);
-  const persistDraft=(form)=>{if(initialData && !draftId)return;const rows=loadWarehouseDrafts();const item={id:draftKeyRef.current,updatedAt:new Date().toISOString(),form};saveWarehouseDrafts([item,...rows.filter(x=>x.id!==item.id)].slice(0,100));};
-  useEffect(()=>{persistDraft(f)},[f]);
-  const patchText=(key,value)=>{f[key]=value;persistDraft({...f,[key]:value});};
-  const clearDraft=()=>saveWarehouseDrafts(loadWarehouseDrafts().filter(x=>x.id!==draftKeyRef.current));
-  const set=k=>e=>{ const value=e.target.value; setF(prev=>({...prev,[k]:value})); };
-  const update=(id,patch)=>setF(prev=>({...prev,items:prev.items.map(x=>x.id===id?{...x,...patch}:x)}));
-  const remove=id=>setF(prev=>({...prev,items:prev.items.filter(x=>x.id!==id)}));
+  const set=k=>e=>setF({...f,[k]:e.target.value});
+  const update=(id,patch)=>setF({...f,items:f.items.map(x=>x.id===id?{...x,...patch}:x)});
+  const remove=id=>setF({...f,items:f.items.filter(x=>x.id!==id)});
   const ops=WAREHOUSE_OPERATIONS[f.type]||[];
   const isTransfer=f.operationType==="luan_chuyen_di";
   const isRepairOut=f.operationType==="sua_chua";
@@ -2670,8 +2642,8 @@ function WarehouseTxModal({ assets, projects, suppliers = [], onClose, onSubmit,
   const isOther=f.operationType==="nhap_khac"||f.operationType==="xuat_khac";
   const isPurchase=f.operationType==="mua_moi";
   const needsCounterparty=isTransfer||f.operationType==="thu_hoi_cong_trinh"||f.operationType==="luan_chuyen_den";
-  const sourceName=projects.find(p=>p.id===f.projectId)?.name||"";
-  const destName=projects.find(p=>p.id===f.counterpartyProjectId)?.name||"";
+  const sourceName=f.locationType==="project"?(projects.find(p=>p.id===f.projectId)?.name||""):(f.warehouseName||"");
+  const destName=f.counterpartyLocationType==="project"?(projects.find(p=>p.id===f.counterpartyProjectId)?.name||""):(f.counterpartyWarehouseName||"");
   const enteredTotal=f.items.reduce((n,x)=>n+(Number(x.quantity)||0)*(Number(x.unitCost)||0),0);
   const Box=({legend,children})=><fieldset className="rounded-md p-3" style={{border:`1px solid ${TOKENS.border}`,background:TOKENS.surface}}><legend className="px-2 text-[12px] font-semibold" style={{color:TOKENS.brand}}>{legend}</legend>{children}</fieldset>;
   return <Modal title={title||"Phiếu kho"} onClose={onClose} wide>
@@ -2682,31 +2654,31 @@ function WarehouseTxModal({ assets, projects, suppliers = [], onClose, onSubmit,
           {fixedOperation?<div className="flex items-center gap-2 mb-3"><span className="px-2.5 py-1 rounded text-[12px] font-semibold" style={{background:TOKENS.brandSoft,color:TOKENS.brand}}>CHUYỂN KHO NỘI BỘ</span><span className="text-[11px]" style={{color:TOKENS.muted}}>Tự động xuất nơi đi, nhập nơi đến và giữ nguyên giá vốn FIFO.</span></div>:<Field label={f.type==="nhap"?"Loại phiếu nhập":"Loại phiếu xuất"}><select className={inputCls} style={inputStyle} value={f.operationType} onChange={e=>setF({...f,operationType:e.target.value})}>{ops.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}</select></Field>}
           {isTransfer?<>
             <div className="grid grid-cols-2 gap-3 mb-2">
-              <div className="rounded-md p-3" style={{background:TOKENS.paper,border:`1px solid ${TOKENS.border}`}}><div className="text-[12px] font-semibold mb-2">Công trình/Kho xuất</div><select className={inputCls} style={inputStyle} value={f.projectId} onChange={set("projectId")}><option value="">Chọn công trình/kho đi</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
-              <div className="rounded-md p-3" style={{background:TOKENS.paper,border:`1px solid ${TOKENS.border}`}}><div className="text-[12px] font-semibold mb-2">Công trình/Kho nhận</div><select className={inputCls} style={inputStyle} value={f.counterpartyProjectId} onChange={set("counterpartyProjectId")}><option value="">Chọn công trình/kho đến</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+              <div className="rounded-md p-3" style={{background:TOKENS.paper,border:`1px solid ${TOKENS.border}`}}><div className="text-[12px] font-semibold mb-2">Xuất tại kho / công trình</div><div className="grid grid-cols-2 gap-2"><select className={inputCls} style={inputStyle} value={f.locationType} onChange={set("locationType")}><option value="project">Công trình</option><option value="warehouse">Kho</option></select>{f.locationType==="project"?<select className={inputCls} style={inputStyle} value={f.projectId} onChange={set("projectId")}><option value="">Chọn công trình đi</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>:<input className={inputCls} style={inputStyle} value={f.warehouseName} onChange={set("warehouseName")} placeholder="Tên kho đi"/>}</div></div>
+              <div className="rounded-md p-3" style={{background:TOKENS.paper,border:`1px solid ${TOKENS.border}`}}><div className="text-[12px] font-semibold mb-2">Nhập tại kho / công trình</div><div className="grid grid-cols-2 gap-2"><select className={inputCls} style={inputStyle} value={f.counterpartyLocationType} onChange={set("counterpartyLocationType")}><option value="project">Công trình</option><option value="warehouse">Kho</option></select>{f.counterpartyLocationType==="project"?<select className={inputCls} style={inputStyle} value={f.counterpartyProjectId} onChange={set("counterpartyProjectId")}><option value="">Chọn công trình đến</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>:<input className={inputCls} style={inputStyle} value={f.counterpartyWarehouseName} onChange={set("counterpartyWarehouseName")} placeholder="Tên kho đến"/>}</div></div>
             </div>
-            <div className="grid grid-cols-2 gap-x-4"><Field label="Lệnh điều động số"><input className={inputCls} style={inputStyle} defaultValue={f.orderNo||""} onInput={e=>patchText("orderNo",e.currentTarget.value)} onBlur={e=>setF(prev=>({...prev,orderNo:e.currentTarget.value}))}/></Field><Field label="Người vận chuyển"><input className={inputCls} style={inputStyle} defaultValue={f.transportPerson||""} onInput={e=>patchText("transportPerson",e.currentTarget.value)} onBlur={e=>setF(prev=>({...prev,transportPerson:e.currentTarget.value}))}/></Field><Field label="Về việc"><input className={inputCls} style={inputStyle} defaultValue={f.description||""} onInput={e=>patchText("description",e.currentTarget.value)} onBlur={e=>setF(prev=>({...prev,description:e.currentTarget.value}))} placeholder="VD: Chuyển vật tư từ CT A đến CT B"/></Field><Field label="Phương tiện"><input className={inputCls} style={inputStyle} defaultValue={f.vehicle||""} onInput={e=>patchText("vehicle",e.currentTarget.value)} onBlur={e=>setF(prev=>({...prev,vehicle:e.currentTarget.value}))}/></Field><Field label="Tham chiếu"><input className={inputCls} style={inputStyle} defaultValue={f.referenceNo||""} onInput={e=>patchText("referenceNo",e.currentTarget.value)} onBlur={e=>setF(prev=>({...prev,referenceNo:e.currentTarget.value}))}/></Field><Field label="Người giao / nhận"><input className={inputCls} style={inputStyle} defaultValue={f.receiver||""} onInput={e=>patchText("receiver",e.currentTarget.value)} onBlur={e=>setF(prev=>({...prev,receiver:e.currentTarget.value}))}/></Field></div>
+            <div className="grid grid-cols-2 gap-x-4"><Field label="Lệnh điều động số"><input className={inputCls} style={inputStyle} value={f.orderNo} onChange={set("orderNo")}/></Field><Field label="Người vận chuyển"><input className={inputCls} style={inputStyle} value={f.transportPerson} onChange={set("transportPerson")}/></Field><Field label="Về việc"><input className={inputCls} style={inputStyle} value={f.description} onChange={set("description")} placeholder="VD: Chuyển vật tư từ CT A đến CT B"/></Field><Field label="Phương tiện"><input className={inputCls} style={inputStyle} value={f.vehicle} onChange={set("vehicle")}/></Field><Field label="Tham chiếu"><input className={inputCls} style={inputStyle} value={f.referenceNo} onChange={set("referenceNo")}/></Field><Field label="Người giao / nhận"><input className={inputCls} style={inputStyle} value={f.receiver} onChange={set("receiver")}/></Field></div>
           </>:<>
             <div className="grid grid-cols-2 gap-x-4">
-              <Field label={f.type==="nhap"?"Công trình/Kho nhận":"Công trình/Kho xuất"}><select className={inputCls} style={inputStyle} value={f.projectId} onChange={set("projectId")}><option value="">Chọn công trình/kho</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
-              <Field label="Nguyên tắc quản lý"><input readOnly className={inputCls} style={{...inputStyle,background:TOKENS.paper}} value="1 Công trình = 1 Kho công trình"/></Field>
-              {needsCounterparty&&<Field label={f.type==="nhap"?"Công trình/Kho nguồn":"Công trình/Kho đích"}><select className={inputCls} style={inputStyle} value={f.counterpartyProjectId} onChange={set("counterpartyProjectId")}><option value="">Chọn công trình/kho đối ứng</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>}
-              <Field label={isPurchase?"Đối tượng / Nhà cung cấp *":"Đối tượng / Nhà cung cấp"}><SupplierSearchPicker suppliers={suppliers} value={f.supplier} onPick={v=>setF(prev=>({...prev,supplier:v}))} onTextInput={v=>patchText("supplier",v)}/></Field>
-              <Field label={f.type==="nhap"?"Người giao hàng":"Người nhận"}><input className={inputCls} style={inputStyle} defaultValue={f.receiver||""} onInput={e=>patchText("receiver",e.currentTarget.value)} onBlur={e=>setF(prev=>({...prev,receiver:e.currentTarget.value}))}/></Field>
-              {isRepairOut&&<Field label="Đơn vị sửa chữa *"><SupplierSearchPicker suppliers={suppliers} value={f.repairVendor} onPick={v=>setF(prev=>({...prev,repairVendor:v}))} onTextInput={v=>patchText("repairVendor",v)}/></Field>}
-              {f.type==="xuat"&&<Field label="Địa chỉ"><input className={inputCls} style={inputStyle} defaultValue={f.address||""} onInput={e=>patchText("address",e.currentTarget.value)} onBlur={e=>setF(prev=>({...prev,address:e.currentTarget.value}))}/></Field>}
-              <Field label={isOther?"Diễn giải / Lý do *":"Diễn giải / Lý do"}><input className={inputCls} style={inputStyle} defaultValue={f.description||""} onInput={e=>patchText("description",e.currentTarget.value)} onBlur={e=>setF(prev=>({...prev,description:e.currentTarget.value}))} /></Field>
-              <Field label="Kèm theo"><AttachmentPicker value={f.attachments||[]} onChange={attachments=>setF(prev=>({...prev,attachments}))}/></Field>
-              <Field label="Tham chiếu"><input className={inputCls} style={inputStyle} defaultValue={f.referenceNo||""} onInput={e=>patchText("referenceNo",e.currentTarget.value)} onBlur={e=>setF(prev=>({...prev,referenceNo:e.currentTarget.value}))}/></Field>
+              <Field label={f.type==="nhap"?"Kho/Công trình nhận":"Kho/Công trình xuất"}><select className={inputCls} style={inputStyle} value={f.locationType} onChange={set("locationType")}><option value="project">Công trình</option><option value="warehouse">Kho</option></select></Field>
+              <Field label={f.locationType==="project"?"Tên công trình":"Tên kho"}>{f.locationType==="project"?<select className={inputCls} style={inputStyle} value={f.projectId} onChange={set("projectId")}><option value="">Chọn công trình</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>:<input className={inputCls} style={inputStyle} value={f.warehouseName} onChange={set("warehouseName")} />}</Field>
+              {needsCounterparty&&<><Field label={f.type==="nhap"?"Nguồn đối ứng":"Đích đối ứng"}><select className={inputCls} style={inputStyle} value={f.counterpartyLocationType} onChange={set("counterpartyLocationType")}><option value="project">Công trình</option><option value="warehouse">Kho</option></select></Field><Field label="Kho/Công trình đối ứng">{f.counterpartyLocationType==="project"?<select className={inputCls} style={inputStyle} value={f.counterpartyProjectId} onChange={set("counterpartyProjectId")}><option value="">Chọn công trình</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>:<input className={inputCls} style={inputStyle} value={f.counterpartyWarehouseName} onChange={set("counterpartyWarehouseName")}/>}</Field></>}
+              <Field label={isPurchase?"Đối tượng / Nhà cung cấp *":"Đối tượng / Nhà cung cấp"}><SupplierSearchPicker suppliers={suppliers} value={f.supplier} onPick={v=>setF({...f,supplier:v})}/></Field>
+              <Field label={f.type==="nhap"?"Người giao hàng":"Người nhận"}><input className={inputCls} style={inputStyle} value={f.receiver} onChange={set("receiver")}/></Field>
+              {isRepairOut&&<Field label="Đơn vị sửa chữa *"><SupplierSearchPicker suppliers={suppliers} value={f.repairVendor} onPick={v=>setF({...f,repairVendor:v})}/></Field>}
+              {f.type==="xuat"&&<Field label="Địa chỉ"><input className={inputCls} style={inputStyle} value={f.address} onChange={set("address")}/></Field>}
+              <Field label={isOther?"Diễn giải / Lý do *":"Diễn giải / Lý do"}><input className={inputCls} style={inputStyle} value={f.description} onChange={set("description")} /></Field>
+              <Field label="Kèm theo"><input className={inputCls} style={inputStyle} value={f.attachedDoc} onChange={set("attachedDoc")} placeholder="Chứng từ gốc / biên bản..."/></Field>
+              <Field label="Tham chiếu"><input className={inputCls} style={inputStyle} value={f.referenceNo} onChange={set("referenceNo")}/></Field>
             </div>
           </>}
         </Box>
       </div>
-      <div className="col-span-3"><Box legend="Chứng từ"><Field label="Ngày hạch toán"><input type="date" className={inputCls} style={inputStyle} value={f.date} onChange={set("date")}/></Field><Field label="Ngày chứng từ"><input type="date" className={inputCls} style={inputStyle} value={f.date} onChange={set("date")}/></Field><Field label="Số chứng từ"><input ref={voucherRef} className={inputCls} style={inputStyle} defaultValue={f.voucherNo||""} onInput={e=>patchText("voucherNo",e.currentTarget.value)} onBlur={e=>setF(prev=>({...prev,voucherNo:e.currentTarget.value}))} placeholder="Để trống để tự sinh"/></Field><div className="text-[11px] leading-relaxed" style={{color:TOKENS.muted}}>Trong cùng ngày, hệ thống mặc định <b>Nhập trước - Xuất sau</b> khi tính FIFO.</div></Box></div>
+      <div className="col-span-3"><Box legend="Chứng từ"><Field label="Ngày hạch toán"><DateEntryInput value={f.date} onChange={v=>setF(prev=>({...prev,date:v}))}/></Field><Field label="Ngày chứng từ"><DateEntryInput value={f.documentDate} onChange={v=>setF(prev=>({...prev,documentDate:v}))}/></Field><Field label="Số chứng từ"><input className={inputCls} style={inputStyle} value={f.voucherNo} onChange={set("voucherNo")} placeholder="Để trống để tự sinh"/></Field><div className="text-[11px] leading-relaxed" style={{color:TOKENS.muted}}>Trong cùng ngày, hệ thống mặc định <b>Nhập trước - Xuất sau</b> khi tính FIFO.</div></Box></div>
     </div>
     <div className="flex items-center justify-between px-3 py-2 rounded-t-md" style={{background:TOKENS.brandSoft,border:`1px solid ${TOKENS.border}`}}><div className="flex items-center gap-4"><b className="text-[13px]">1. Hàng tiền</b><span className="text-[12px]" style={{color:TOKENS.muted}}>2. Thống kê</span><span className="text-[12px]" style={{color:TOKENS.muted}}>3. Khác</span></div><div className="flex gap-2"><Btn small onClick={()=>setF({...f,items:[...f.items,...Array.from({length:5},blank)]})}>+5 dòng</Btn><Btn small icon={Plus} onClick={()=>setF({...f,items:[...f.items,blank()]})}>Thêm dòng</Btn></div></div>
     <div className="overflow-auto" style={{border:`1px solid ${TOKENS.border}`,borderTop:0}}><table className="w-full min-w-[1250px]"><thead><tr>{(isTransfer?["STT","Mã hàng","Tên hàng","Xuất tại kho","Nhập tại kho","ĐVT","Số lượng","Giá vốn FIFO","Thành tiền","Tìm/chọn"]:["STT","Mã hàng","Tên hàng","Kho/Công trình","ĐVT","Số lượng",f.type==="nhap"?"Đơn giá":"Giá vốn FIFO","Thành tiền","Tìm/chọn"]).map(h=><Th key={h}>{h}</Th>)}</tr></thead><tbody>{f.items.map((x,i)=>{const a=assets.find(z=>z.id===x.assetId)||{};const amount=(Number(x.quantity)||0)*(Number(x.unitCost)||0);return <tr key={x.id} className="aa-row"><Td>{i+1}</Td><Td mono>{a.code||"—"}</Td><Td>{a.name||"—"}</Td><Td>{sourceName||"—"}</Td>{isTransfer&&<Td>{destName||"—"}</Td>}<Td>{a.unit||"Cái"}</Td><Td><input type="number" min="0.01" step="0.01" className={inputCls} style={{...inputStyle,width:90}} value={x.quantity} onChange={e=>update(x.id,{quantity:e.target.value})}/></Td><Td>{f.type==="nhap"&&!isTransfer?<input type="number" min="0" className={inputCls} style={{...inputStyle,width:120}} value={x.unitCost} onChange={e=>update(x.id,{unitCost:e.target.value})}/>:<span className="text-[11px]" style={{color:TOKENS.muted}}>Tự tính FIFO khi lưu</span>}</Td><Td right mono>{f.type==="nhap"&&!isTransfer?fmtVND(amount):"—"}</Td><Td><div className="flex items-center gap-2 min-w-[290px]"><AssetSearchPicker assets={assets} value={x.assetId} onPick={picked=>update(x.id,{assetId:picked.id,unitCost:f.type==="nhap"&&!isTransfer?(picked.cost||0):0})}/><button type="button" onClick={()=>remove(x.id)} title="Xóa dòng"><X size={14}/></button></div></Td></tr>})}</tbody></table></div>
-    <div className="flex justify-between items-end mt-3"><Field label="Ghi chú"><textarea className={inputCls} style={{...inputStyle,width:520}} value={f.note} onChange={set("note")}/></Field><div className="text-right"><div className="text-[11px]" style={{color:TOKENS.muted}}>{f.type==="nhap"&&!isTransfer?"Tổng giá trị phiếu":"Giá vốn sẽ được xác định theo FIFO của đúng Kho/Công trình khi lưu"}</div>{f.type==="nhap"&&!isTransfer&&<div className="aa-display text-xl font-bold" style={{color:TOKENS.brand}}>{fmtVND(enteredTotal)}</div>}<div className="flex gap-2 mt-3"><Btn onClick={onClose}>Đóng</Btn><Btn kind="primary" icon={Save} onClick={()=>{const payload={...f,operationType:fixedOperation||f.operationType,voucherNo:voucherRef.current?.value??f.voucherNo};const ok=onSubmit(payload);if(ok)clearDraft()}}>{submitLabel}</Btn></div></div></div>
+    <div className="flex justify-between items-end mt-3"><Field label="Ghi chú"><textarea className={inputCls} style={{...inputStyle,width:520}} value={f.note} onChange={set("note")}/></Field><div className="text-right"><div className="text-[11px]" style={{color:TOKENS.muted}}>{f.type==="nhap"&&!isTransfer?"Tổng giá trị phiếu":"Giá vốn sẽ được xác định theo FIFO của đúng Kho/Công trình khi lưu"}</div>{f.type==="nhap"&&!isTransfer&&<div className="aa-display text-xl font-bold" style={{color:TOKENS.brand}}>{fmtVND(enteredTotal)}</div>}<div className="flex gap-2 mt-3"><Btn onClick={onClose}>Đóng</Btn><Btn kind="primary" icon={Save} onClick={()=>onSubmit({...f,operationType:fixedOperation||f.operationType})}>{submitLabel}</Btn></div></div></div>
   </Modal>;
 }
 
@@ -3099,7 +3071,7 @@ function MinutesModal({ asset, onClose, onSubmit }) {
   );
 }
 
-function ProjectFormModal({ onClose, onSubmit }) { const [f,setF]=useState({commander:"",name:"",address:"",workItem:"",startDate:"",endDate:""}); const set=k=>e=>setF({...f,[k]:e.target.value}); return <Modal title="Thêm công trình" onClose={onClose} wide><div className="grid grid-cols-2 gap-x-4"><Field label="Chỉ huy trưởng"><input className={inputCls} style={inputStyle} value={f.commander} onChange={set("commander")}/></Field><Field label="Tên công trình"><input className={inputCls} style={inputStyle} value={f.name} onChange={set("name")}/></Field><Field label="Địa chỉ"><input className={inputCls} style={inputStyle} value={f.address} onChange={set("address")}/></Field><Field label="Hạng mục thi công"><input className={inputCls} style={inputStyle} value={f.workItem} onChange={set("workItem")}/></Field><Field label="Ngày bắt đầu"><input type="date" className={inputCls} style={inputStyle} value={f.startDate} onChange={set("startDate")}/></Field><Field label="Ngày kết thúc"><input type="date" className={inputCls} style={inputStyle} value={f.endDate} onChange={set("endDate")}/></Field></div><div className="flex justify-end gap-2 mt-4"><Btn onClick={onClose}>Huỷ</Btn><Btn kind="primary" disabled={!f.name.trim()} onClick={()=>onSubmit(f)}>Thêm Công trình/Kho</Btn></div></Modal>; }
+function ProjectFormModal({ onClose, onSubmit }) { const [f,setF]=useState({commander:"",name:"",address:"",workItem:"",startDate:"",endDate:""}); const set=k=>e=>setF({...f,[k]:e.target.value}); return <Modal title="Thêm công trình" onClose={onClose} wide><div className="grid grid-cols-2 gap-x-4"><Field label="Chỉ huy trưởng"><input className={inputCls} style={inputStyle} value={f.commander} onChange={set("commander")}/></Field><Field label="Tên công trình"><input className={inputCls} style={inputStyle} value={f.name} onChange={set("name")}/></Field><Field label="Địa chỉ"><input className={inputCls} style={inputStyle} value={f.address} onChange={set("address")}/></Field><Field label="Hạng mục thi công"><input className={inputCls} style={inputStyle} value={f.workItem} onChange={set("workItem")}/></Field><Field label="Ngày bắt đầu"><input type="date" className={inputCls} style={inputStyle} value={f.startDate} onChange={set("startDate")}/></Field><Field label="Ngày kết thúc"><input type="date" className={inputCls} style={inputStyle} value={f.endDate} onChange={set("endDate")}/></Field></div><div className="flex justify-end gap-2 mt-4"><Btn onClick={onClose}>Huỷ</Btn><Btn kind="primary" disabled={!f.name.trim()} onClick={()=>onSubmit(f)}>Thêm công trình</Btn></div></Modal>; }
 
 function ChangePasswordModal({ onClose, onSubmit }) {
   const [oldPw, setOldPw] = useState("");
