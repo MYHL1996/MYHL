@@ -337,7 +337,16 @@ const normalizeDateInput = (v, { fallbackToday=false } = {}) => {
     if (n > 20000 && n < 80000) { const d = XLSX.SSF.parse_date_code(n); if (d) { const ymd=`${d.y}-${String(d.m).padStart(2,"0")}-${String(d.d).padStart(2,"0")}`; return isValidYmd(ymd)?ymd:""; } }
   }
   const x=String(v).trim();
-  let m=x.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  // Gõ nhanh 6 số ddmmyy, ví dụ 260926 -> 26/09/2026.
+  if(/^\d{6}$/.test(x)){
+    const yy=Number(x.slice(4,6));
+    const yyyy=2000+yy;
+    const ymd=`${yyyy}-${x.slice(2,4)}-${x.slice(0,2)}`;
+    return isValidYmd(ymd)?ymd:"";
+  }
+  let m=x.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2})$/);
+  if(m){ const yyyy=2000+Number(m[3]); const ymd=`${yyyy}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`; return isValidYmd(ymd)?ymd:""; }
+  m=x.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
   if(m){ const ymd=`${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`; return isValidYmd(ymd)?ymd:""; }
   m=x.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/);
   if(m){ const ymd=`${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`; return isValidYmd(ymd)?ymd:""; }
@@ -346,11 +355,36 @@ const normalizeDateInput = (v, { fallbackToday=false } = {}) => {
 const parseDateValue = (v) => normalizeDateInput(v,{fallbackToday:true});
 const displayDateInput = (v) => { const ymd=normalizeDateInput(v); if(!ymd) return String(v||""); const [y,m,d]=ymd.split("-"); return `${d}/${m}/${y}`; };
 function DateEntryInput({value,onChange,placeholder="dd/mm/yyyy"}) {
+  // Giữ text đang gõ ở local state. KHÔNG đẩy chuỗi dở dang lên form cha,
+  // tránh render cha làm ô ngày mất focus / chỉ gõ được 1 ký tự.
   const [text,setText]=useState(()=>displayDateInput(value));
   const pickerRef=useRef(null);
-  useEffect(()=>{setText(displayDateInput(value));},[value]);
-  const commit=(raw=text)=>{ const ymd=normalizeDateInput(raw); if(ymd){setText(displayDateInput(ymd));onChange(ymd);return true;} return false; };
-  return <div className="flex items-center gap-1"><input className={inputCls} style={{...inputStyle,minWidth:125}} inputMode="numeric" value={text} placeholder={placeholder} onChange={e=>{const raw=e.target.value.replace(/[^0-9\/-]/g,"").slice(0,10);setText(raw);const ymd=normalizeDateInput(raw);onChange(ymd||raw)}} onBlur={()=>{if(text.trim())commit()}}/><button type="button" className="px-2 py-1.5 rounded border text-[12px]" style={{borderColor:TOKENS.border}} title="Chọn ngày" onClick={()=>{const el=pickerRef.current;if(el?.showPicker)el.showPicker();else el?.click()}}>📅</button><input ref={pickerRef} type="date" tabIndex={-1} className="absolute opacity-0 pointer-events-none w-0 h-0" value={normalizeDateInput(value)} onChange={e=>{if(e.target.value){onChange(e.target.value);setText(displayDateInput(e.target.value))}}}/></div>;
+  const editingRef=useRef(false);
+  useEffect(()=>{ if(!editingRef.current) setText(displayDateInput(value)); },[value]);
+  const commit=(raw=text)=>{
+    const ymd=normalizeDateInput(raw);
+    if(ymd){ const shown=displayDateInput(ymd); setText(shown); onChange(ymd); return true; }
+    return false;
+  };
+  const handleChange=(e)=>{
+    const raw=e.target.value.replace(/[^0-9\/-]/g,"").slice(0,10);
+    editingRef.current=true;
+    setText(raw);
+    // Chỉ cập nhật form cha khi người dùng đã nhập ĐỦ một ngày hợp lệ.
+    // 26092026 => 26/09/2026; 260926 => 26/09/2026; 26/09/26 => 26/09/2026.
+    const compact=raw.replace(/[\/-]/g,"");
+    const complete = /^\d{8}$/.test(compact) || /^\d{6}$/.test(compact) || /^\d{1,2}[\/-]\d{1,2}[\/-](?:\d{2}|\d{4})$/.test(raw);
+    if(complete){
+      const ymd=normalizeDateInput(raw);
+      if(ymd){ setText(displayDateInput(ymd)); onChange(ymd); editingRef.current=false; }
+    }
+  };
+  const handleBlur=()=>{
+    editingRef.current=false;
+    if(text.trim()) commit(text);
+    else { setText(""); onChange(""); }
+  };
+  return <div className="flex items-center gap-1"><input className={inputCls} style={{...inputStyle,minWidth:125}} inputMode="numeric" value={text} placeholder={placeholder} onFocus={()=>{editingRef.current=true}} onChange={handleChange} onBlur={handleBlur}/><button type="button" className="px-2 py-1.5 rounded border text-[12px]" style={{borderColor:TOKENS.border}} title="Chọn ngày" onMouseDown={e=>e.preventDefault()} onClick={()=>{const el=pickerRef.current;if(el?.showPicker)el.showPicker();else el?.click()}}>📅</button><input ref={pickerRef} type="date" tabIndex={-1} className="absolute opacity-0 pointer-events-none w-0 h-0" value={normalizeDateInput(value)} onChange={e=>{if(e.target.value){editingRef.current=false;onChange(e.target.value);setText(displayDateInput(e.target.value))}}}/></div>;
 }
 const monthsBetween = (a, b) => {
   const d1 = new Date(a), d2 = new Date(b);
