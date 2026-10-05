@@ -2672,10 +2672,40 @@ function DocumentModal({assets=[],projects=[],onClose,onSubmit}){
   return <Modal title="Thêm biên bản / tài liệu" onClose={onClose} wide><div className="grid grid-cols-2 gap-3"><Field label="Loại tài liệu"><select className={inputCls} style={inputStyle} value={f.type} onChange={set("type")}>{types.map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Số tài liệu / tham chiếu"><input className={inputCls} style={inputStyle} value={f.referenceNo} onChange={set("referenceNo")}/></Field><Field label="Ngày tài liệu"><input type="date" className={inputCls} style={inputStyle} value={f.date} onChange={set("date")}/></Field><Field label="Công trình/Kho"><select className={inputCls} style={inputStyle} value={f.projectId} onChange={set("projectId")}><option value="">Không bắt buộc</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></Field><Field label="Tài sản"><select className={inputCls} style={inputStyle} value={f.assetId} onChange={set("assetId")}><option value="">Không bắt buộc</option>{assets.map(a=><option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}</select></Field></div><Field label="Diễn giải"><textarea rows={3} className={inputCls} style={inputStyle} value={f.content} onChange={set("content")}/></Field><Field label="File tài liệu *"><AttachmentPicker value={f.attachments} onChange={attachments=>setF(p=>({...p,attachments}))}/></Field><div className="flex justify-end gap-2 mt-3"><Btn onClick={onClose}>Hủy</Btn><Btn kind="primary" icon={Save} onClick={()=>onSubmit(f)}>Lưu tài liệu</Btn></div></Modal>;
 }
 
+function formatViDateInput(iso){
+  const m=String(iso||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m?`${m[3]}/${m[2]}/${m[1]}`:String(iso||"");
+}
+function parseViDateInput(raw){
+  const digits=String(raw||"").replace(/\D/g,"").slice(0,8);
+  if(digits.length!==8)return "";
+  const d=Number(digits.slice(0,2)), m=Number(digits.slice(2,4)), y=Number(digits.slice(4,8));
+  if(y<1900||y>2999||m<1||m>12||d<1||d>31)return "";
+  const dt=new Date(y,m-1,d);
+  if(dt.getFullYear()!==y||dt.getMonth()!==m-1||dt.getDate()!==d)return "";
+  return `${String(y).padStart(4,"0")}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+}
+function SmartViDateInput({value,onChange}){
+  const [text,setText]=useState(()=>formatViDateInput(value));
+  useEffect(()=>{setText(formatViDateInput(value))},[value]);
+  const handleChange=e=>{
+    let raw=e.target.value;
+    const digits=raw.replace(/\D/g,"").slice(0,8);
+    if(/^\d+$/.test(raw)&&digits.length>2){
+      raw=digits.length<=4?`${digits.slice(0,2)}/${digits.slice(2)}`:`${digits.slice(0,2)}/${digits.slice(2,4)}/${digits.slice(4)}`;
+    }
+    setText(raw);
+    const iso=parseViDateInput(raw);
+    if(iso)onChange(iso);
+  };
+  const handleBlur=()=>{const iso=parseViDateInput(text);setText(iso?formatViDateInput(iso):formatViDateInput(value));};
+  return <input type="text" inputMode="numeric" className={inputCls} style={inputStyle} value={text} onChange={handleChange} onBlur={handleBlur} placeholder="dd/mm/yyyy" maxLength={10}/>;
+}
+
 function WarehouseTxModal({ assets, projects, suppliers = [], onClose, onSubmit, title, fixedType, fixedOperation = "", initialData = null, draftId = null, submitLabel = "Lưu chứng từ" }) {
   const blank=()=>({id:uid("line"),assetId:"",quantity:1,unitCost:0});
   const initialOperation=fixedOperation || initialData?.operationType || (fixedType==="xuat"?"su_dung_cong_trinh":"mua_moi");
-  const defaultForm={type:fixedType||initialData?.type||"nhap",operationType:initialOperation,voucherNo:"",date:nowIso().slice(0,10),receiver:"",supplier:"",description:"",locationType:"project",warehouseName:"",projectId:"",counterpartyLocationType:"project",counterpartyProjectId:"",counterpartyWarehouseName:"",repairVendor:"",note:"",address:"",referenceNo:"",attachedDoc:"",attachments:[],transportPerson:"",vehicle:"",orderNo:"",items:Array.from({length:8},blank)};
+  const defaultForm={type:fixedType||initialData?.type||"nhap",operationType:initialOperation,voucherNo:"",date:nowIso().slice(0,10),documentDate:nowIso().slice(0,10),receiver:"",supplier:"",description:"",locationType:"project",warehouseName:"",projectId:"",counterpartyLocationType:"project",counterpartyProjectId:"",counterpartyWarehouseName:"",repairVendor:"",note:"",address:"",referenceNo:"",attachedDoc:"",attachments:[],transportPerson:"",vehicle:"",orderNo:"",items:Array.from({length:8},blank)};
   const [f,setF]=useState(()=>({...defaultForm,...(initialData||{}),type:fixedType||initialData?.type||defaultForm.type,operationType:fixedOperation||initialData?.operationType||defaultForm.operationType,items:Array.isArray(initialData?.items)&&initialData.items.length?initialData.items.map(x=>({...x,id:x.id||uid("line")})):defaultForm.items}));
   const draftKeyRef=useRef(draftId||uid("draft"));
   const voucherRef=useRef(null);
@@ -2725,7 +2755,7 @@ function WarehouseTxModal({ assets, projects, suppliers = [], onClose, onSubmit,
           </>}
         </Box>
       </div>
-      <div className="col-span-3"><Box legend="Chứng từ"><Field label="Ngày hạch toán"><input type="date" className={inputCls} style={inputStyle} value={f.date} onChange={set("date")}/></Field><Field label="Ngày chứng từ"><input type="date" className={inputCls} style={inputStyle} value={f.date} onChange={set("date")}/></Field><Field label="Số chứng từ"><input ref={voucherRef} className={inputCls} style={inputStyle} defaultValue={f.voucherNo||""} onInput={e=>patchText("voucherNo",e.currentTarget.value)} onBlur={e=>setF(prev=>({...prev,voucherNo:e.currentTarget.value}))} placeholder="Để trống để tự sinh"/></Field><div className="text-[11px] leading-relaxed" style={{color:TOKENS.muted}}>Trong cùng ngày, hệ thống mặc định <b>Nhập trước - Xuất sau</b> khi tính FIFO.</div></Box></div>
+      <div className="col-span-3"><Box legend="Chứng từ"><Field label="Ngày hạch toán"><SmartViDateInput value={f.date} onChange={value=>setF(prev=>({...prev,date:value}))}/></Field><Field label="Ngày chứng từ"><SmartViDateInput value={f.documentDate||f.date} onChange={value=>setF(prev=>({...prev,documentDate:value}))}/></Field><Field label="Số chứng từ"><input ref={voucherRef} className={inputCls} style={inputStyle} defaultValue={f.voucherNo||""} onInput={e=>patchText("voucherNo",e.currentTarget.value)} onBlur={e=>setF(prev=>({...prev,voucherNo:e.currentTarget.value}))} placeholder="Để trống để tự sinh"/></Field><div className="text-[11px] leading-relaxed" style={{color:TOKENS.muted}}>Trong cùng ngày, hệ thống mặc định <b>Nhập trước - Xuất sau</b> khi tính FIFO.</div></Box></div>
     </div>
     <div className="flex items-center justify-between px-3 py-2 rounded-t-md" style={{background:TOKENS.brandSoft,border:`1px solid ${TOKENS.border}`}}><div className="flex items-center gap-4"><b className="text-[13px]">1. Hàng tiền</b><span className="text-[12px]" style={{color:TOKENS.muted}}>2. Thống kê</span><span className="text-[12px]" style={{color:TOKENS.muted}}>3. Khác</span></div><div className="flex gap-2"><Btn small onClick={()=>setF({...f,items:[...f.items,...Array.from({length:5},blank)]})}>+5 dòng</Btn><Btn small icon={Plus} onClick={()=>setF({...f,items:[...f.items,blank()]})}>Thêm dòng</Btn></div></div>
     <div className="overflow-auto" style={{border:`1px solid ${TOKENS.border}`,borderTop:0}}><table className="w-full min-w-[1250px]"><thead><tr>{(isTransfer?["STT","Mã hàng","Tên hàng","Xuất tại kho","Nhập tại kho","ĐVT","Số lượng","Giá vốn FIFO","Thành tiền","Tìm/chọn"]:["STT","Mã hàng","Tên hàng","Kho/Công trình","ĐVT","Số lượng",f.type==="nhap"?"Đơn giá":"Giá vốn FIFO","Thành tiền","Tìm/chọn"]).map(h=><Th key={h}>{h}</Th>)}</tr></thead><tbody>{f.items.map((x,i)=>{const a=assets.find(z=>z.id===x.assetId)||{};const amount=(Number(x.quantity)||0)*(Number(x.unitCost)||0);return <tr key={x.id} className="aa-row"><Td>{i+1}</Td><Td mono>{a.code||"—"}</Td><Td>{a.name||"—"}</Td><Td>{sourceName||"—"}</Td>{isTransfer&&<Td>{destName||"—"}</Td>}<Td>{a.unit||"Cái"}</Td><Td><input type="number" min="0.01" step="0.01" className={inputCls} style={{...inputStyle,width:90}} value={x.quantity} onChange={e=>update(x.id,{quantity:e.target.value})}/></Td><Td>{f.type==="nhap"&&!isTransfer?<input type="number" min="0" className={inputCls} style={{...inputStyle,width:120}} value={x.unitCost} onChange={e=>update(x.id,{unitCost:e.target.value})}/>:<span className="text-[11px]" style={{color:TOKENS.muted}}>Tự tính FIFO khi lưu</span>}</Td><Td right mono>{f.type==="nhap"&&!isTransfer?fmtVND(amount):"—"}</Td><Td><div className="flex items-center gap-2 min-w-[290px]"><AssetSearchPicker assets={assets} value={x.assetId} onPick={picked=>update(x.id,{assetId:picked.id,unitCost:f.type==="nhap"&&!isTransfer?(picked.cost||0):0})}/><button type="button" onClick={()=>remove(x.id)} title="Xóa dòng"><X size={14}/></button></div></Td></tr>})}</tbody></table></div>
