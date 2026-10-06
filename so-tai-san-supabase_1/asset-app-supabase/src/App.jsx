@@ -12,7 +12,7 @@ import {
   PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
-const CORE_VERSION = "v39.0.0-row-origin-ledger-reconcile";
+const CORE_VERSION = "v40.0.0-canonical-ledger-edit-fix";
 const WAREHOUSE_DRAFTS_KEY = "myhl_warehouse_drafts_v26";
 const loadWarehouseDrafts = () => { try { const x=JSON.parse(localStorage.getItem(WAREHOUSE_DRAFTS_KEY)||"[]"); return Array.isArray(x)?x:[]; } catch { return []; } };
 const saveWarehouseDrafts = (rows) => { try { localStorage.setItem(WAREHOUSE_DRAFTS_KEY, JSON.stringify(rows)); window.dispatchEvent(new CustomEvent("myhl:drafts-changed")); } catch {} };
@@ -427,6 +427,35 @@ function isLegacyCatalogImportStockRow(w) {
   return note === normalizeText("Nhập từ Excel") && (!voucher || voucher.includes("-OPEN"));
 }
 
+function resolveWarehouseAsset(row, assets = []) {
+  if (!row) return null;
+  const code = normalizeText(row.itemCode || "");
+  const origin = normalizeText(row.ownership || "TMC");
+  const linked = assets.find(a => a.id === row.assetId) || null;
+  if (!code) return linked;
+  const sameCode = assets.filter(a => normalizeText(a.code) === code);
+  if (!sameCode.length) return linked;
+  const sameOrigin = sameCode.find(a => normalizeText(a.ownership || "TMC") === origin);
+  if (sameOrigin) return sameOrigin;
+  // Legacy vouchers often did not store origin correctly. If the item code is unique,
+  // the code printed on the voucher is the source of truth, never an unrelated assetId.
+  if (sameCode.length === 1) return sameCode[0];
+  if (linked && normalizeText(linked.code) === code) return linked;
+  return sameCode[0];
+}
+
+function canonicalWarehouseRows(warehouse = [], assets = []) {
+  return (Array.isArray(warehouse) ? warehouse : []).map(w => {
+    const a = resolveWarehouseAsset(w, assets);
+    return a && a.id !== w.assetId ? { ...w, assetId:a.id, itemCode:a.code, itemName:a.name, unit:a.unit||w.unit, category:a.category||w.category, assetGroup:a.assetGroup||w.assetGroup } : w;
+  });
+}
+
+function summarizeAssetWarehouseCanonical(asset, warehouse = [], assets = []) {
+  const rows = canonicalWarehouseRows(warehouse, assets).filter(w => w && w.assetId === asset.id && !isLegacyCatalogImportStockRow(w));
+  return summarizeAssetWarehouse(asset.id, rows);
+}
+
 function summarizeAssetWarehouse(assetId, warehouse = []) {
   const rows = (Array.isArray(warehouse) ? warehouse : []).filter(w => w && w.assetId === assetId && !isLegacyCatalogImportStockRow(w));
   let totalIn = 0, totalOut = 0, purchaseQty = 0, purchaseValue = 0;
@@ -488,7 +517,7 @@ function withDefaults(d) {
     projects: legacyProjects,
     // Không bao giờ suy diễn tồn kho từ Danh mục tài sản.
     // Đồng thời loại bỏ các dòng nhập giả do Import Danh mục ở các phiên bản cũ.
-    warehouse: (Array.isArray(d.warehouse) ? d.warehouse : []).filter(w => !isLegacyCatalogImportStockRow(w)).map((w, i) => { const linked = migratedAssets.find(x => x.id === w.assetId); const codeMatches=migratedAssets.filter(x=>normalizeText(x.code)===normalizeText(w.itemCode||linked?.code||"")); const a = codeMatches.length ? (codeMatches.find(x=>normalizeText(x.ownership||"")===normalizeText(w.ownership||"")) || codeMatches[0]) : linked; const correctedAssetId=a?.id||w.assetId; const loc0=safeText(w.locationName||w.warehouseName,""); const matched=projectByName.get(normalizeText(loc0)); const pid=w.projectId||matched?.id||legacyProjects[0]?.id||null; const loc=pid?(legacyProjects.find(p=>p.id===pid)?.name||loc0):loc0; return { ...w, assetId: correctedAssetId, voucherNo: w.voucherNo || `PN-${String(w.date || nowIso().slice(0,10)).replaceAll("-", "")}-OPEN${String(i+1).padStart(3,"0")}`, projectId: pid, locationType: "project", locationName: loc, warehouseName: "", itemName: w.itemName || a?.name || "", itemCode: w.itemCode || a?.code || "", category: w.category || a?.category || "Khác", assetGroup: w.assetGroup || a?.assetGroup || "Thiết bị chính", ownership: w.ownership || a?.ownership || "Công ty", operationType: w.operationType || (w.type === "nhap" ? "mua_moi" : "su_dung_cong_trinh"), operationLabel: w.operationLabel || OPERATION_LABELS[w.operationType] || (w.type === "nhap" ? "Mua mới bên ngoài" : "Xuất dùng tại công trình"), counterpartyLocation: w.counterpartyLocation || "", repairVendor: w.repairVendor || "", transferId: w.transferId || "" }; }),
+    warehouse: (Array.isArray(d.warehouse) ? d.warehouse : []).filter(w => !isLegacyCatalogImportStockRow(w)).map((w, i) => { const linked = migratedAssets.find(x => x.id === w.assetId); const codeMatches=migratedAssets.filter(x=>normalizeText(x.code)===normalizeText(w.itemCode||linked?.code||"")); const a = codeMatches.length ? (codeMatches.find(x=>normalizeText(x.ownership||"TMC")===normalizeText(w.ownership||"TMC")) || (codeMatches.length===1?codeMatches[0]:(linked&&normalizeText(linked.code)===normalizeText(w.itemCode||linked?.code||"")?linked:codeMatches[0]))) : linked; const correctedAssetId=a?.id||w.assetId; const loc0=safeText(w.locationName||w.warehouseName,""); const matched=projectByName.get(normalizeText(loc0)); const pid=w.projectId||matched?.id||legacyProjects[0]?.id||null; const loc=pid?(legacyProjects.find(p=>p.id===pid)?.name||loc0):loc0; return { ...w, assetId: correctedAssetId, voucherNo: w.voucherNo || `PN-${String(w.date || nowIso().slice(0,10)).replaceAll("-", "")}-OPEN${String(i+1).padStart(3,"0")}`, projectId: pid, locationType: "project", locationName: loc, warehouseName: "", itemName: w.itemName || a?.name || "", itemCode: w.itemCode || a?.code || "", category: w.category || a?.category || "Khác", assetGroup: w.assetGroup || a?.assetGroup || "Thiết bị chính", ownership: w.ownership || a?.ownership || "Công ty", operationType: w.operationType || (w.type === "nhap" ? "mua_moi" : "su_dung_cong_trinh"), operationLabel: w.operationLabel || OPERATION_LABELS[w.operationType] || (w.type === "nhap" ? "Mua mới bên ngoài" : "Xuất dùng tại công trình"), counterpartyLocation: w.counterpartyLocation || "", repairVendor: w.repairVendor || "", transferId: w.transferId || "" }; }),
     costHistory: Array.isArray(d.costHistory) ? d.costHistory : [],
     employees: undefined,
     settings: {
@@ -521,7 +550,12 @@ function useAppData(enabled) {
       const { data: row, error } = await supabase.from("app_data").select("data").eq("id", 1).single();
       if (error) throw error;
       if (row && row.data && Object.keys(row.data).length > 0) {
-        setDataState(withDefaults(row.data));
+        const normalized = withDefaults(row.data);
+        const reconciledWarehouse = canonicalWarehouseRows(normalized.warehouse || [], normalized.assets || []);
+        const changed = reconciledWarehouse.some((w,i)=>w.assetId !== normalized.warehouse?.[i]?.assetId || w.itemCode !== normalized.warehouse?.[i]?.itemCode);
+        const reconciled = changed ? { ...normalized, warehouse: reconciledWarehouse, activityLog: logAction(normalized.activityLog||[], `Tự đối soát sổ kho theo Mã hàng: sửa ${reconciledWarehouse.filter((w,i)=>w.assetId !== normalized.warehouse?.[i]?.assetId).length} liên kết tài sản sai`, {kind:"ledger_reconcile"}) } : normalized;
+        setDataState(reconciled);
+        if (changed) await supabase.from("app_data").update({ data: reconciled, updated_at: new Date().toISOString() }).eq("id", 1);
       } else {
         const s = seed();
         setDataState(s);
@@ -1150,7 +1184,7 @@ export default function AssetManagementApp() {
         for(const lot of lots){if(left<=0)break;const take=Math.min(left,lot.remain);if(take>0){fifoAllocations.push({inRowId:lot.rowId,inVoucherNo:lot.voucherNo,inDate:lot.date,quantity:take,unitCost:lot.unitCost,sourceLocation:locationName});totalCost+=take*lot.unitCost;left-=take;}}
         effectiveUnitCost=qty>0?totalCost/qty:0;
       }
-      const base={id:uid("wh"),voucherNo,assetId:asset.id,type:form.type,quantity:qty,date,unitCost:effectiveUnitCost,total:qty*effectiveUnitCost,unit:asset.unit||item.unit||"Cái",receiver:form.receiver||"",supplier:form.supplier||"",description:form.description||form.note||"",note:form.note||"",category:asset.category||"Khác",assetGroup:asset.assetGroup||"Thiết bị chính",ownership:item.ownership||"TMC",locationType:"project",locationName,warehouseName:"",projectId:form.projectId||null,itemName:asset.name,itemCode:asset.code,operationType,operationLabel,counterpartyLocation,repairVendor:form.repairVendor||"",transferId,address:form.address||"",referenceNo:form.referenceNo||"",attachedDoc:form.attachedDoc||"",attachments:Array.isArray(form.attachments)?form.attachments:[],transportPerson:form.transportPerson||"",vehicle:form.vehicle||"",orderNo:form.orderNo||"",fifoAllocations};
+      const base={id:uid("wh"),voucherNo,assetId:asset.id,type:form.type,quantity:qty,date,documentDate:parseDateValue(form.documentDate||date),unitCost:effectiveUnitCost,total:qty*effectiveUnitCost,unit:asset.unit||item.unit||"Cái",receiver:form.receiver||"",supplier:form.supplier||"",description:form.description||form.note||"",note:form.note||"",category:asset.category||"Khác",assetGroup:asset.assetGroup||"Thiết bị chính",ownership:item.ownership||"TMC",locationType:"project",locationName,warehouseName:"",projectId:form.projectId||null,itemName:asset.name,itemCode:asset.code,operationType,operationLabel,counterpartyLocation,repairVendor:form.repairVendor||"",transferId,address:form.address||"",referenceNo:form.referenceNo||"",attachedDoc:form.attachedDoc||"",attachments:Array.isArray(form.attachments)?form.attachments:[],transportPerson:form.transportPerson||"",vehicle:form.vehicle||"",orderNo:form.orderNo||"",fifoAllocations};
       rows.push(base);
       if(operationType === "luan_chuyen_di") {
         fifoAllocations.forEach((alloc,ai)=>pairedRows.push({...base,id:uid("wh"),type:"nhap",quantity:alloc.quantity,unitCost:alloc.unitCost,total:alloc.quantity*alloc.unitCost,operationType:"luan_chuyen_den",operationLabel:OPERATION_LABELS.luan_chuyen_den,locationType:"project",locationName:counterpartyLocation,warehouseName:"",projectId:form.counterpartyProjectId||null,counterpartyLocation:locationName,supplier:"",receiver:form.receiver||"",sourceInboundVoucher:alloc.inVoucherNo||"",sourceInboundDate:alloc.inDate||"",fifoAllocations:[alloc],transferLayerIndex:ai+1}));
@@ -1272,6 +1306,7 @@ export default function AssetManagementApp() {
       operationType: isTransfer ? "luan_chuyen_di" : (base.operationType || (base.type === "xuat" ? "su_dung_cong_trinh" : "mua_moi")),
       voucherNo: base.voucherNo || "",
       date: parseDateValue(base.date),
+      documentDate: parseDateValue(base.documentDate || base.date),
       receiver: base.receiver || "",
       supplier: base.supplier || "",
       description: base.description || base.note || "",
@@ -1292,7 +1327,7 @@ export default function AssetManagementApp() {
       orderNo: base.orderNo || "",
       items: sourceRows.map(w => ({
         id: uid("line"),
-        assetId: w.assetId,
+        assetId: (resolveWarehouseAsset(w, data.assets)||{}).id || w.assetId,
         quantity: Number(w.quantity || 0),
         // Phiếu xuất/chuyển luôn tính lại giá vốn FIFO khi lưu.
         unitCost: base.type === "nhap" && !isTransfer ? Number(w.unitCost || 0) : 0,
@@ -2199,17 +2234,17 @@ function AssetCatalog({ assets, warehouse = [], projectName, onSelect, selectedA
   const [selected,setSelected]=useState([]);
   const [catalogFilter,setCatalogFilter]=useState({q:"",ownership:"",location:""});
   const fileRef=useRef(null);
-  const summaryById = useMemo(() => Object.fromEntries(assets.map(a => [a.id, summarizeAssetWarehouse(a.id, warehouse)])), [assets, warehouse]);
+  const summaryById = useMemo(() => Object.fromEntries(assets.map(a => [a.id, summarizeAssetWarehouseCanonical(a, warehouse, assets)])), [assets, warehouse]);
   const catalogOwnerships=[...new Set([...assets.map(a=>safeText(a.ownership,"TMC")),...warehouse.map(w=>safeText(w.ownership))].filter(Boolean))].sort();
   const catalogLocations=[...new Set(warehouse.map(w=>safeText(w.locationName||w.warehouseName)).filter(Boolean))].sort();
   const visibleAssets=assets.filter(a=>{
     if(catalogFilter.ownership&&safeText(a.ownership,"TMC")!==catalogFilter.ownership)return false;
     if(catalogFilter.q&&!normalizeText(`${a.code} ${a.name} ${a.assetGroup} ${a.ownership}`).includes(normalizeText(catalogFilter.q)))return false;
-    if(catalogFilter.location){const m=summaryById[a.id]||summarizeAssetWarehouse(a.id,warehouse);if(!m.locations.some(x=>x.name===catalogFilter.location&&Number(x.quantity)>1e-9))return false;}
+    if(catalogFilter.location){const m=summaryById[a.id]||summarizeAssetWarehouseCanonical(a,warehouse,assets);if(!m.locations.some(x=>x.name===catalogFilter.location&&Number(x.quantity)>1e-9))return false;}
     return true;
   });
   const headers = ["Mã quản lý", "Tên tài sản", "ĐVT", "Loại", "Nhóm tài sản", "Nguồn", "Tổng nhập", "Tổng xuất", "Tổng tồn", "Giá nhập TB", "Giá trị tồn", "Số kho/CT có tồn", ...customColumns.map((c) => c.label)];
-  const buildRows = () => visibleAssets.map((a) => { const m = summaryById[a.id] || summarizeAssetWarehouse(a.id, warehouse); return [a.code, a.name, a.unit||"Cái", a.category, a.assetGroup || "", a.ownership || "Công ty", m.totalIn, m.totalOut, m.stock, Math.round(m.avgInPrice), Math.round(m.stockValue), m.locationCount, ...customColumns.map((c) => a.customFields?.[c.key] ?? "")]; });
+  const buildRows = () => visibleAssets.map((a) => { const m = summaryById[a.id] || summarizeAssetWarehouseCanonical(a, warehouse, assets); return [a.code, a.name, a.unit||"Cái", a.category, a.assetGroup || "", a.ownership || "Công ty", m.totalIn, m.totalOut, m.stock, Math.round(m.avgInPrice), Math.round(m.stockValue), m.locationCount, ...customColumns.map((c) => a.customFields?.[c.key] ?? "")]; });
   const visibleIds=visibleAssets.map(a=>a.id), allSelected=visibleIds.length>0&&visibleIds.every(id=>selected.includes(id));
   const toggleAll=()=>setSelected(allSelected?selected.filter(id=>!visibleIds.includes(id)):[...new Set([...selected,...visibleIds])]);
   const downloadTemplate=()=>downloadExcelTemplate("Mau_Import_Bang_Map_Danh_Muc_Tai_San",["Mã quản lý","Tên tài sản","Đơn vị tính","Loại","Nhóm tài sản","Nguồn","Nguyên giá tham khảo","Ngày mua tham khảo","Thời gian SD","Bộ phận","Serial","Nhà cung cấp","Ghi chú"],[["TS-001","Máy khoan mẫu","Cái","TBT","Thiết bị điện","Công ty",3500000,"24/08/2026",36,"Vận hành","SN001","NCC A",""]]);
@@ -2375,7 +2410,7 @@ function AssetDetail({ asset, data, projectName, isAdmin, onDelete, onClose, onA
 /* ============================== BY EMPLOYEE ============================== */
 
 function ByProject({ data, projectName, onSelect }) {
-  const assets=(data.assets||[]).filter(Boolean), projects=(data.projects||[]).filter(Boolean), warehouse=(data.warehouse||[]).filter(Boolean);
+  const assets=(data.assets||[]).filter(Boolean), projects=(data.projects||[]).filter(Boolean), warehouse=canonicalWarehouseRows((data.warehouse||[]).filter(Boolean),(data.assets||[]).filter(Boolean));
   const assetsById=Object.fromEntries(assets.map(a=>[a.id,a]));
   const [view,setView]=useState("project");
   const [q,setQ]=useState("");
