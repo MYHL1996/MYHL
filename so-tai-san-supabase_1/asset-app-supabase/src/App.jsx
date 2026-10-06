@@ -12,7 +12,7 @@ import {
   PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
-const CORE_VERSION = "v42.0.0-code-authority-consistency-fix";
+const CORE_VERSION = "v43.0.0-edit-voucher-snapshot-lock";
 const WAREHOUSE_DRAFTS_KEY = "myhl_warehouse_drafts_v26";
 const loadWarehouseDrafts = () => { try { const x=JSON.parse(localStorage.getItem(WAREHOUSE_DRAFTS_KEY)||"[]"); return Array.isArray(x)?x:[]; } catch { return []; } };
 const saveWarehouseDrafts = (rows) => { try { localStorage.setItem(WAREHOUSE_DRAFTS_KEY, JSON.stringify(rows)); window.dispatchEvent(new CustomEvent("myhl:drafts-changed")); } catch {} };
@@ -1353,14 +1353,22 @@ export default function AssetManagementApp() {
       transportPerson: base.transportPerson || "",
       vehicle: base.vehicle || "",
       orderNo: base.orderNo || "",
-      items: sourceRows.map(w => ({
+      items: sourceRows.map(w => {
+        const snapshotCode = safeText(w.itemCode || "");
+        const exactByCode = data.assets.find(a => normalizeText(a.code) === normalizeText(snapshotCode));
+        return {
         id: uid("line"),
-        assetId: (resolveWarehouseAsset(w, data.assets)||{}).id || w.assetId,
+        // v43: khi Sửa phiếu, mã snapshot đang hiển thị trên chứng từ có quyền ưu tiên tuyệt đối.
+        // Không dùng assetId lịch sử nếu assetId đó trỏ sang mã khác.
+        assetId: exactByCode?.id || (resolveWarehouseAsset(w, data.assets)||{}).id || w.assetId,
+        itemCode: snapshotCode,
+        itemName: safeText(w.itemName || exactByCode?.name || ""),
         quantity: Number(w.quantity || 0),
         // Phiếu xuất/chuyển luôn tính lại giá vốn FIFO khi lưu.
         unitCost: base.type === "nhap" && !isTransfer ? Number(w.unitCost || 0) : 0,
         ownership: w.ownership || "TMC",
-      })),
+      };
+      }),
     };
 
     setModal({
@@ -2874,7 +2882,15 @@ function WarehouseTxModal({ assets, projects, suppliers = [], onClose, onSubmit,
   const blank=()=>({id:uid("line"),assetId:"",quantity:1,unitCost:0,ownership:"TMC"});
   const initialOperation=fixedOperation || initialData?.operationType || (fixedType==="xuat"?"su_dung_cong_trinh":"mua_moi");
   const defaultForm={type:fixedType||initialData?.type||"nhap",operationType:initialOperation,voucherNo:"",date:nowIso().slice(0,10),documentDate:nowIso().slice(0,10),receiver:"",supplier:"",description:"",locationType:"project",warehouseName:"",projectId:"",counterpartyLocationType:"project",counterpartyProjectId:"",counterpartyWarehouseName:"",repairVendor:"",note:"",address:"",referenceNo:"",attachedDoc:"",attachments:[],transportPerson:"",vehicle:"",orderNo:"",ownership:"TMC",items:Array.from({length:8},blank)};
-  const [f,setF]=useState(()=>({...defaultForm,...(initialData||{}),type:fixedType||initialData?.type||defaultForm.type,operationType:fixedOperation||initialData?.operationType||defaultForm.operationType,items:Array.isArray(initialData?.items)&&initialData.items.length?initialData.items.map(x=>({...x,id:x.id||uid("line")})):defaultForm.items}));
+  const [f,setF]=useState(()=>{
+    const rawItems=Array.isArray(initialData?.items)&&initialData.items.length?initialData.items:defaultForm.items;
+    const hydratedItems=rawItems.map(x=>{
+      const code=safeText(x.itemCode||"");
+      const exact=code?assets.find(a=>normalizeText(a.code)===normalizeText(code)):null;
+      return {...x,id:x.id||uid("line"),assetId:exact?.id||x.assetId||"",itemCode:code||exact?.code||""};
+    });
+    return {...defaultForm,...(initialData||{}),type:fixedType||initialData?.type||defaultForm.type,operationType:fixedOperation||initialData?.operationType||defaultForm.operationType,items:hydratedItems};
+  });
   const draftKeyRef=useRef(draftId||uid("draft"));
   const voucherRef=useRef(null);
   // v37: keyboard-first quantity entry for large receipt vouchers.
@@ -2954,7 +2970,7 @@ function WarehouseTxModal({ assets, projects, suppliers = [], onClose, onSubmit,
       <div className="col-span-3"><Box legend="Chứng từ"><Field label="Ngày hạch toán"><SmartViDateInput value={f.date} onChange={value=>setF(prev=>({...prev,date:value}))}/></Field><Field label="Ngày chứng từ"><SmartViDateInput value={f.documentDate||f.date} onChange={value=>setF(prev=>({...prev,documentDate:value}))}/></Field><Field label="Số chứng từ"><input ref={voucherRef} className={inputCls} style={inputStyle} defaultValue={f.voucherNo||""} onInput={e=>patchText("voucherNo",e.currentTarget.value)} onBlur={e=>setF(prev=>({...prev,voucherNo:e.currentTarget.value}))} placeholder="Để trống để tự sinh"/></Field><div className="text-[11px] leading-relaxed" style={{color:TOKENS.muted}}>Trong cùng ngày, hệ thống mặc định <b>Nhập trước - Xuất sau</b> khi tính FIFO.</div></Box></div>
     </div>
     <div className="flex items-center justify-between px-3 py-2 rounded-t-md" style={{background:TOKENS.brandSoft,border:`1px solid ${TOKENS.border}`}}><div className="flex items-center gap-4"><b className="text-[13px]">1. Hàng tiền</b><span className="text-[12px]" style={{color:TOKENS.muted}}>2. Thống kê</span><span className="text-[12px]" style={{color:TOKENS.muted}}>3. Khác</span></div><div className="flex gap-2"><Btn small onClick={()=>setF({...f,items:[...f.items,...Array.from({length:5},blank)]})}>+5 dòng</Btn><Btn small icon={Plus} onClick={()=>setF({...f,items:[...f.items,blank()]})}>Thêm dòng</Btn></div></div>
-    <div className="overflow-auto" style={{border:`1px solid ${TOKENS.border}`,borderTop:0}}><table className="w-full min-w-[1250px]"><thead><tr>{(isTransfer?["STT","Mã hàng","Tên hàng","Xuất tại kho","Nhập tại kho","ĐVT","Số lượng","Giá vốn FIFO","Thành tiền","Tìm/chọn","Nguồn gốc vật tư"]:["STT","Mã hàng","Tên hàng","Kho/Công trình","ĐVT","Số lượng",f.type==="nhap"?"Đơn giá":"Giá vốn FIFO","Thành tiền","Tìm/chọn","Nguồn gốc vật tư"]).map(h=><Th key={h}>{h}</Th>)}</tr></thead><tbody>{f.items.map((x,i)=>{const a=assets.find(z=>z.id===x.assetId)||{};const amount=(Number(x.quantity)||0)*(Number(x.unitCost)||0);return <tr key={x.id} className="aa-row"><Td>{i+1}</Td><Td mono>{a.code||"—"}</Td><Td>{a.name||"—"}</Td><Td>{sourceName||"—"}</Td>{isTransfer&&<Td>{destName||"—"}</Td>}<Td>{a.unit||"Cái"}</Td><Td><input ref={el=>{if(el)quantityRefs.current[x.id]=el;else delete quantityRefs.current[x.id]}} type="number" min="0.01" step="0.01" className={inputCls} style={{...inputStyle,width:90}} value={x.quantity} onChange={e=>update(x.id,{quantity:e.target.value})} onKeyDown={e=>moveQuantityByArrow(e,i)} onFocus={e=>{if(f.type==="nhap"&&!isTransfer)requestAnimationFrame(()=>{try{e.currentTarget.select()}catch{}})}} title={f.type==="nhap"&&!isTransfer?"↑/↓: chuyển dòng và bôi đen số lượng":""}/></Td><Td>{f.type==="nhap"&&!isTransfer?<input type="number" min="0" className={inputCls} style={{...inputStyle,width:120}} value={x.unitCost} onChange={e=>update(x.id,{unitCost:e.target.value})}/>:<span className="text-[11px]" style={{color:TOKENS.muted}}>Tự tính FIFO khi lưu</span>}</Td><Td right mono>{f.type==="nhap"&&!isTransfer?fmtVND(amount):"—"}</Td><Td><div className="flex items-center gap-2 min-w-[290px]"><AssetSearchPicker assets={assets} value={x.assetId} onPick={picked=>{update(x.id,{assetId:picked.id,unitCost:f.type==="nhap"&&!isTransfer?(picked.cost||0):0,ownership:x.ownership||"TMC"});if(f.type==="nhap"&&!isTransfer)focusQuantityRow(x.id)}}/><button type="button" onClick={()=>remove(x.id)} title="Xóa dòng"><X size={14}/></button></div></Td><Td><select className={inputCls} style={{...inputStyle,minWidth:150}} value={x.ownership||"TMC"} onChange={e=>update(x.id,{ownership:e.target.value})}>{originOptions.map(o=><option key={o} value={o}>{o}</option>)}</select></Td></tr>})}</tbody></table></div>
+    <div className="overflow-auto" style={{border:`1px solid ${TOKENS.border}`,borderTop:0}}><table className="w-full min-w-[1250px]"><thead><tr>{(isTransfer?["STT","Mã hàng","Tên hàng","Xuất tại kho","Nhập tại kho","ĐVT","Số lượng","Giá vốn FIFO","Thành tiền","Tìm/chọn","Nguồn gốc vật tư"]:["STT","Mã hàng","Tên hàng","Kho/Công trình","ĐVT","Số lượng",f.type==="nhap"?"Đơn giá":"Giá vốn FIFO","Thành tiền","Tìm/chọn","Nguồn gốc vật tư"]).map(h=><Th key={h}>{h}</Th>)}</tr></thead><tbody>{f.items.map((x,i)=>{const a=assets.find(z=>z.id===x.assetId)||{};const amount=(Number(x.quantity)||0)*(Number(x.unitCost)||0);return <tr key={x.id} className="aa-row"><Td>{i+1}</Td><Td mono>{x.itemCode||a.code||"—"}</Td><Td>{x.itemName||a.name||"—"}</Td><Td>{sourceName||"—"}</Td>{isTransfer&&<Td>{destName||"—"}</Td>}<Td>{a.unit||"Cái"}</Td><Td><input ref={el=>{if(el)quantityRefs.current[x.id]=el;else delete quantityRefs.current[x.id]}} type="number" min="0.01" step="0.01" className={inputCls} style={{...inputStyle,width:90}} value={x.quantity} onChange={e=>update(x.id,{quantity:e.target.value})} onKeyDown={e=>moveQuantityByArrow(e,i)} onFocus={e=>{if(f.type==="nhap"&&!isTransfer)requestAnimationFrame(()=>{try{e.currentTarget.select()}catch{}})}} title={f.type==="nhap"&&!isTransfer?"↑/↓: chuyển dòng và bôi đen số lượng":""}/></Td><Td>{f.type==="nhap"&&!isTransfer?<input type="number" min="0" className={inputCls} style={{...inputStyle,width:120}} value={x.unitCost} onChange={e=>update(x.id,{unitCost:e.target.value})}/>:<span className="text-[11px]" style={{color:TOKENS.muted}}>Tự tính FIFO khi lưu</span>}</Td><Td right mono>{f.type==="nhap"&&!isTransfer?fmtVND(amount):"—"}</Td><Td><div className="flex items-center gap-2 min-w-[290px]"><AssetSearchPicker assets={assets} value={x.assetId} onPick={picked=>{update(x.id,{assetId:picked.id,itemCode:picked.code||"",itemName:picked.name||"",unitCost:f.type==="nhap"&&!isTransfer?(picked.cost||0):0,ownership:x.ownership||"TMC"});if(f.type==="nhap"&&!isTransfer)focusQuantityRow(x.id)}}/><button type="button" onClick={()=>remove(x.id)} title="Xóa dòng"><X size={14}/></button></div></Td><Td><select className={inputCls} style={{...inputStyle,minWidth:150}} value={x.ownership||"TMC"} onChange={e=>update(x.id,{ownership:e.target.value})}>{originOptions.map(o=><option key={o} value={o}>{o}</option>)}</select></Td></tr>})}</tbody></table></div>
     <div className="flex justify-between items-end mt-3"><Field label="Ghi chú"><textarea className={inputCls} style={{...inputStyle,width:520}} value={f.note} onChange={set("note")}/></Field><div className="text-right"><div className="text-[11px]" style={{color:TOKENS.muted}}>{f.type==="nhap"&&!isTransfer?"Tổng giá trị phiếu":"Giá vốn sẽ được xác định theo FIFO của đúng Kho/Công trình khi lưu"}</div>{f.type==="nhap"&&!isTransfer&&<div className="aa-display text-xl font-bold" style={{color:TOKENS.brand}}>{fmtVND(enteredTotal)}</div>}<div className="flex gap-2 mt-3"><Btn onClick={onClose}>Đóng</Btn><Btn kind="primary" icon={Save} onClick={()=>{const payload={...f,operationType:fixedOperation||f.operationType,voucherNo:voucherRef.current?.value??f.voucherNo};const ok=onSubmit(payload);if(ok)clearDraft()}}>{submitLabel}</Btn></div></div></div>
   </Modal>;
 }
