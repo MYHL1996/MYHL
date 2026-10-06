@@ -12,7 +12,7 @@ import {
   PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
-const CORE_VERSION = "v41.0.0-stability-nondestructive-reconcile";
+const CORE_VERSION = "v42.0.0-code-authority-consistency-fix";
 const WAREHOUSE_DRAFTS_KEY = "myhl_warehouse_drafts_v26";
 const loadWarehouseDrafts = () => { try { const x=JSON.parse(localStorage.getItem(WAREHOUSE_DRAFTS_KEY)||"[]"); return Array.isArray(x)?x:[]; } catch { return []; } };
 const saveWarehouseDrafts = (rows) => { try { localStorage.setItem(WAREHOUSE_DRAFTS_KEY, JSON.stringify(rows)); window.dispatchEvent(new CustomEvent("myhl:drafts-changed")); } catch {} };
@@ -455,14 +455,11 @@ function resolveWarehouseAsset(row, assets = [], lookup = null) {
   if (!sameCode.length) return linked;
   if (linked && normalizeText(linked.code) === code) return linked;
 
-  const origin = normalizeText(row.ownership || "TMC");
-  const exact = idx.byCodeOrigin.get(`${code}¦${origin}`);
-  if (exact) return exact;
-  if (sameCode.length === 1) return sameCode[0];
-
-  // Nếu cùng mã có nhiều nguồn mà chứng từ cũ không đủ dữ kiện, không đoán bừa.
-  // Giữ liên kết hiện tại để người dùng xử lý bằng Sửa phiếu.
-  return linked || sameCode[0];
+  // v42: Mã hàng của dòng chứng từ là khóa nhận diện tài sản.
+  // Nguồn gốc (TMC/Thái Minh/Thuê/...) chỉ là chiều tồn kho của chính mã đó.
+  // Nếu assetId cũ lệch itemCode, tuyệt đối không giữ assetId của mã khác.
+  if (sameCode.length >= 1) return sameCode[0];
+  return linked;
 }
 
 function canonicalWarehouseRows(warehouse = [], assets = []) {
@@ -476,8 +473,12 @@ function canonicalWarehouseRows(warehouse = [], assets = []) {
 }
 
 function summarizeAssetWarehouseCanonical(asset, warehouse = [], assets = []) {
-  const rows = canonicalWarehouseRows(warehouse, assets).filter(w => w && w.assetId === asset.id && !isLegacyCatalogImportStockRow(w));
-  return summarizeAssetWarehouse(asset.id, rows);
+  const code = normalizeText(asset?.code || "");
+  const rows = canonicalWarehouseRows(warehouse, assets).filter(w => {
+    if (!w || isLegacyCatalogImportStockRow(w)) return false;
+    return w.itemCode ? normalizeText(w.itemCode) === code : w.assetId === asset.id;
+  });
+  return summarizeAssetWarehouse(asset.id, rows.map(w => ({...w, assetId: asset.id})));
 }
 
 function summarizeAssetWarehouse(assetId, warehouse = []) {
@@ -542,7 +543,7 @@ function withDefaults(d) {
     projects: legacyProjects,
     // Không bao giờ suy diễn tồn kho từ Danh mục tài sản.
     // Đồng thời loại bỏ các dòng nhập giả do Import Danh mục ở các phiên bản cũ.
-    warehouse: (Array.isArray(d.warehouse) ? d.warehouse : []).filter(w => !isLegacyCatalogImportStockRow(w)).map((w, i) => { const linked = migratedAssetLookup.byId.get(w.assetId) || null; const code=normalizeText(w.itemCode||linked?.code||""); const codeMatches=migratedAssetLookup.byCode.get(code)||[]; const a = (linked && normalizeText(linked.code)===code) ? linked : (migratedAssetLookup.byCodeOrigin.get(`${code}¦${normalizeText(w.ownership||"TMC")}`) || (codeMatches.length===1?codeMatches[0]:linked)); const correctedAssetId=a?.id||w.assetId; const loc0=safeText(w.locationName||w.warehouseName,""); const matched=projectByName.get(normalizeText(loc0)); const pid=w.projectId||matched?.id||legacyProjects[0]?.id||null; const loc=pid?(legacyProjects.find(p=>p.id===pid)?.name||loc0):loc0; return { ...w, assetId: correctedAssetId, voucherNo: w.voucherNo || `PN-${String(w.date || nowIso().slice(0,10)).replaceAll("-", "")}-OPEN${String(i+1).padStart(3,"0")}`, projectId: pid, locationType: "project", locationName: loc, warehouseName: "", itemName: w.itemName || a?.name || "", itemCode: w.itemCode || a?.code || "", category: w.category || a?.category || "Khác", assetGroup: w.assetGroup || a?.assetGroup || "Thiết bị chính", ownership: w.ownership || a?.ownership || "Công ty", operationType: w.operationType || (w.type === "nhap" ? "mua_moi" : "su_dung_cong_trinh"), operationLabel: w.operationLabel || OPERATION_LABELS[w.operationType] || (w.type === "nhap" ? "Mua mới bên ngoài" : "Xuất dùng tại công trình"), counterpartyLocation: w.counterpartyLocation || "", repairVendor: w.repairVendor || "", transferId: w.transferId || "" }; }),
+    warehouse: (Array.isArray(d.warehouse) ? d.warehouse : []).filter(w => !isLegacyCatalogImportStockRow(w)).map((w, i) => { const linked = migratedAssetLookup.byId.get(w.assetId) || null; const code=normalizeText(w.itemCode||linked?.code||""); const codeMatches=migratedAssetLookup.byCode.get(code)||[]; const a = (linked && normalizeText(linked.code)===code) ? linked : (codeMatches.length ? codeMatches[0] : linked); const correctedAssetId=a?.id||w.assetId; const loc0=safeText(w.locationName||w.warehouseName,""); const matched=projectByName.get(normalizeText(loc0)); const pid=w.projectId||matched?.id||legacyProjects[0]?.id||null; const loc=pid?(legacyProjects.find(p=>p.id===pid)?.name||loc0):loc0; return { ...w, assetId: correctedAssetId, voucherNo: w.voucherNo || `PN-${String(w.date || nowIso().slice(0,10)).replaceAll("-", "")}-OPEN${String(i+1).padStart(3,"0")}`, projectId: pid, locationType: "project", locationName: loc, warehouseName: "", itemName: w.itemName || a?.name || "", itemCode: w.itemCode || a?.code || "", category: w.category || a?.category || "Khác", assetGroup: w.assetGroup || a?.assetGroup || "Thiết bị chính", ownership: w.ownership || a?.ownership || "Công ty", operationType: w.operationType || (w.type === "nhap" ? "mua_moi" : "su_dung_cong_trinh"), operationLabel: w.operationLabel || OPERATION_LABELS[w.operationType] || (w.type === "nhap" ? "Mua mới bên ngoài" : "Xuất dùng tại công trình"), counterpartyLocation: w.counterpartyLocation || "", repairVendor: w.repairVendor || "", transferId: w.transferId || "" }; }),
     costHistory: Array.isArray(d.costHistory) ? d.costHistory : [],
     employees: undefined,
     settings: {
@@ -1309,7 +1310,10 @@ export default function AssetManagementApp() {
     const primary = isTransfer
       ? related.filter(w => w.type === "xuat" && (w.operationType === "luan_chuyen_di" || !w.operationType))
       : related.filter(w => w.type === row.type);
-    const sourceRows = primary.length ? primary : [row];
+    const rawSourceRows = primary.length ? primary : [row];
+    // Cùng một resolver với bảng Kho/Danh mục/Tài sản theo công trình:
+    // mở Sửa phiếu phải ra đúng mã đang hiển thị trên chứng từ.
+    const sourceRows = canonicalWarehouseRows(rawSourceRows, data.assets);
     const base = sourceRows[0];
 
     const sourceLocationName = base.locationName || base.warehouseName || (base.projectId ? projectName(base.projectId) : "Kho trung tâm");
@@ -2667,7 +2671,8 @@ function WarehouseHub({ warehouse = [], assets = [], projects = [], settings = {
   const safeProjects = (Array.isArray(projects) ? projects : []).filter(p => p && typeof p === "object").map((p, i) => ({
     ...p, id: safeText(p.id, `legacy_project_${i}`), name: safeText(p.name, `Công trình ${i + 1}`)
   }));
-  const safeWarehouse = (Array.isArray(warehouse) ? warehouse : []).filter(w => w && typeof w === "object").map((w, i) => ({
+  const canonicalInputWarehouse = canonicalWarehouseRows((Array.isArray(warehouse) ? warehouse : []).filter(Boolean), safeAssets);
+  const safeWarehouse = canonicalInputWarehouse.filter(w => w && typeof w === "object").map((w, i) => ({
     ...w,
     id: safeText(w.id, `legacy_wh_${i}`), assetId: safeText(w.assetId), projectId: safeText(w.projectId),
     voucherNo: safeText(w.voucherNo, "—"), date: safeText(w.date),
