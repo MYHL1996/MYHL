@@ -12,7 +12,7 @@ import {
   PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
-const CORE_VERSION = "v45.0.0-unique-asset-id-root-fix";
+const CORE_VERSION = "v46.0.0-rental-save-confirmation-fix";
 const WAREHOUSE_DRAFTS_KEY = "myhl_warehouse_drafts_v26";
 const loadWarehouseDrafts = () => { try { const x=JSON.parse(localStorage.getItem(WAREHOUSE_DRAFTS_KEY)||"[]"); return Array.isArray(x)?x:[]; } catch { return []; } };
 const saveWarehouseDrafts = (rows) => { try { localStorage.setItem(WAREHOUSE_DRAFTS_KEY, JSON.stringify(rows)); window.dispatchEvent(new CustomEvent("myhl:drafts-changed")); } catch {} };
@@ -647,18 +647,25 @@ function useAppData(enabled) {
   }, [enabled]);
 
   const persist = useCallback(async (next) => {
+    const previous = data;
     setDataState(next);
     setSaving(true);
     try {
       const { error } = await supabase.from("app_data").update({ data: next, updated_at: new Date().toISOString() }).eq("id", 1);
       if (error) throw error;
       setErr(null);
+      return { ok:true };
     } catch (e) {
-      setErr("Lưu thất bại — kiểm tra kết nối mạng, thay đổi có thể chưa lưu lên máy chủ.");
+      // v46: không được báo "đã lưu" khi Supabase thực tế thất bại.
+      // Rollback state để người dùng không hiểu nhầm dữ liệu đã ghi sổ.
+      if (previous) setDataState(previous);
+      const message=e?.message ? `Lưu thất bại: ${e.message}` : "Lưu thất bại — kiểm tra kết nối mạng/quyền Supabase.";
+      setErr(message);
+      return { ok:false, error:message };
     } finally {
       setSaving(false);
     }
-  }, []);
+  }, [data]);
 
   const reload = useCallback(async () => { await load(); }, [load]);
 
@@ -1195,7 +1202,7 @@ export default function AssetManagementApp() {
     notify("Đã sửa bộ phận");
   };
 
-  const addWarehouseTx = (form, editMeta = null) => {
+  const addWarehouseTx = async (form, editMeta = null) => {
     // Khi sửa phiếu: loại toàn bộ bundle cũ khỏi phép tính tồn/FIFO trước,
     // sau đó dựng lại phiếu từ form mới. Với chuyển kho, bundle gồm cả dòng xuất + nhập đối ứng.
     const items = Array.isArray(form.items) ? form.items.filter(x=>x.assetId && Number(x.quantity)>0) : [form];
@@ -1316,7 +1323,11 @@ export default function AssetManagementApp() {
       nextRepairs=nextRepairs.map(r=>affected.has(r.assetId)&&r.status==="Đang sửa"?{...r,status:"Hoàn thành",completeDate:date,returnVoucherNo:voucherNo}:r);
     }
 
-    setData({...data,assets:nextAssets,repairs:nextRepairs,warehouse:[...allRows,...currentRows],transactions:[...txs,...baseTransactions],activityLog:logAction(data.activityLog,`${editIds.size?"Sửa":"Lập"} ${operationLabel} ${voucherNo} — ${rows.length} mã tài sản — ${locationName}${counterpartyLocation?` ↔ ${counterpartyLocation}`:""}`)});
+    const saveResult = await setData({...data,assets:nextAssets,repairs:nextRepairs,warehouse:[...allRows,...currentRows],transactions:[...txs,...baseTransactions],activityLog:logAction(data.activityLog,`${editIds.size?"Sửa":"Lập"} ${operationLabel} ${voucherNo} — ${rows.length} mã tài sản — ${locationName}${counterpartyLocation?` ↔ ${counterpartyLocation}`:""}`)});
+    if(!saveResult?.ok){
+      notify(saveResult?.error || "Không lưu được chứng từ. Dữ liệu chưa được ghi lên máy chủ.");
+      return false;
+    }
     notify(`${editIds.size?"Đã cập nhật":"Đã lưu"} ${operationLabel.toLowerCase()} ${voucherNo} (${rows.length} mã)`); return true;
   };
 
@@ -2033,7 +2044,7 @@ export default function AssetManagementApp() {
           draftId={modal.draft?.id || null}
           submitLabel={modal.type === "warehouseEdit" ? "Lưu thay đổi" : "Lưu chứng từ"}
           assets={data.assets} projects={data.projects} suppliers={settings.suppliers || []} onClose={()=>setModal(null)}
-          onSubmit={f=>{const ok=addWarehouseTx(f, modal.type === "warehouseEdit" ? modal.editMeta : null);if(ok)setModal(null);return ok}}
+          onSubmit={async f=>{const ok=await addWarehouseTx(f, modal.type === "warehouseEdit" ? modal.editMeta : null);if(ok)setModal(null);return ok}}
         />}
         {modal?.type === "repairEdit" && <RepairEditModal repair={data.repairs.find(r=>r.id===modal.repairId)} onClose={()=>setModal(null)} onSubmit={f=>{if(updateRepair(modal.repairId,f))setModal(null)}} />}
         {modal?.type === "repairHistoryEdit" && <RepairHistoryEditModal repair={data.repairs.find(r=>r.id===modal.repairId)} assets={data.assets} onClose={()=>setModal(null)} onSubmit={f=>{if(updateRepairHistory(modal.repairId,f))setModal(null)}} />}
@@ -2929,6 +2940,8 @@ function WarehouseTxModal({ assets, projects, suppliers = [], onClose, onSubmit,
     });
     return {...defaultForm,...(initialData||{}),type:fixedType||initialData?.type||defaultForm.type,operationType:fixedOperation||initialData?.operationType||defaultForm.operationType,items:hydratedItems};
   });
+  const [submitting,setSubmitting]=useState(false);
+  const [submitError,setSubmitError]=useState("");
   const draftKeyRef=useRef(draftId||uid("draft"));
   const voucherRef=useRef(null);
   // v37: keyboard-first quantity entry for large receipt vouchers.
@@ -3009,7 +3022,7 @@ function WarehouseTxModal({ assets, projects, suppliers = [], onClose, onSubmit,
     </div>
     <div className="flex items-center justify-between px-3 py-2 rounded-t-md" style={{background:TOKENS.brandSoft,border:`1px solid ${TOKENS.border}`}}><div className="flex items-center gap-4"><b className="text-[13px]">1. Hàng tiền</b><span className="text-[12px]" style={{color:TOKENS.muted}}>2. Thống kê</span><span className="text-[12px]" style={{color:TOKENS.muted}}>3. Khác</span></div><div className="flex gap-2"><Btn small onClick={()=>setF({...f,items:[...f.items,...Array.from({length:5},blank)]})}>+5 dòng</Btn><Btn small icon={Plus} onClick={()=>setF({...f,items:[...f.items,blank()]})}>Thêm dòng</Btn></div></div>
     <div className="overflow-auto" style={{border:`1px solid ${TOKENS.border}`,borderTop:0}}><table className="w-full min-w-[1250px]"><thead><tr>{(isTransfer?["STT","Mã hàng","Tên hàng","Xuất tại kho","Nhập tại kho","ĐVT","Số lượng","Giá vốn FIFO","Thành tiền","Tìm/chọn","Nguồn gốc vật tư"]:["STT","Mã hàng","Tên hàng","Kho/Công trình","ĐVT","Số lượng",f.type==="nhap"?"Đơn giá":"Giá vốn FIFO","Thành tiền","Tìm/chọn","Nguồn gốc vật tư"]).map(h=><Th key={h}>{h}</Th>)}</tr></thead><tbody>{f.items.map((x,i)=>{const a=assets.find(z=>z.id===x.assetId)||{};const amount=(Number(x.quantity)||0)*(Number(x.unitCost)||0);return <tr key={x.id} className="aa-row"><Td>{i+1}</Td><Td mono>{x.itemCode||a.code||"—"}</Td><Td>{x.itemName||a.name||"—"}</Td><Td>{sourceName||"—"}</Td>{isTransfer&&<Td>{destName||"—"}</Td>}<Td>{a.unit||"Cái"}</Td><Td><input ref={el=>{if(el)quantityRefs.current[x.id]=el;else delete quantityRefs.current[x.id]}} type="number" min="0.01" step="0.01" className={inputCls} style={{...inputStyle,width:90}} value={x.quantity} onChange={e=>update(x.id,{quantity:e.target.value})} onKeyDown={e=>moveQuantityByArrow(e,i)} onFocus={e=>{if(f.type==="nhap"&&!isTransfer)requestAnimationFrame(()=>{try{e.currentTarget.select()}catch{}})}} title={f.type==="nhap"&&!isTransfer?"↑/↓: chuyển dòng và bôi đen số lượng":""}/></Td><Td>{f.type==="nhap"&&!isTransfer?<input type="number" min="0" className={inputCls} style={{...inputStyle,width:120}} value={x.unitCost} onChange={e=>update(x.id,{unitCost:e.target.value})}/>:<span className="text-[11px]" style={{color:TOKENS.muted}}>Tự tính FIFO khi lưu</span>}</Td><Td right mono>{f.type==="nhap"&&!isTransfer?fmtVND(amount):"—"}</Td><Td><div className="flex items-center gap-2 min-w-[290px]"><AssetSearchPicker key={`${x.id}¦${x.itemCode||x.assetId||""}`} assets={assets} value={x.assetId} onPick={picked=>{update(x.id,{assetId:picked.id,itemCode:picked.code||"",itemName:picked.name||"",unitCost:f.type==="nhap"&&!isTransfer?(picked.cost||0):0,ownership:x.ownership||"TMC"});if(f.type==="nhap"&&!isTransfer)focusQuantityRow(x.id)}}/><button type="button" onClick={()=>remove(x.id)} title="Xóa dòng"><X size={14}/></button></div></Td><Td><select className={inputCls} style={{...inputStyle,minWidth:150}} value={x.ownership||"TMC"} onChange={e=>update(x.id,{ownership:e.target.value})}>{originOptions.map(o=><option key={o} value={o}>{o}</option>)}</select></Td></tr>})}</tbody></table></div>
-    <div className="flex justify-between items-end mt-3"><Field label="Ghi chú"><textarea className={inputCls} style={{...inputStyle,width:520}} value={f.note} onChange={set("note")}/></Field><div className="text-right"><div className="text-[11px]" style={{color:TOKENS.muted}}>{f.type==="nhap"&&!isTransfer?"Tổng giá trị phiếu":"Giá vốn sẽ được xác định theo FIFO của đúng Kho/Công trình khi lưu"}</div>{f.type==="nhap"&&!isTransfer&&<div className="aa-display text-xl font-bold" style={{color:TOKENS.brand}}>{fmtVND(enteredTotal)}</div>}<div className="flex gap-2 mt-3"><Btn onClick={onClose}>Đóng</Btn><Btn kind="primary" icon={Save} onClick={()=>{const payload={...f,operationType:fixedOperation||f.operationType,voucherNo:voucherRef.current?.value??f.voucherNo};const ok=onSubmit(payload);if(ok)clearDraft()}}>{submitLabel}</Btn></div></div></div>
+    <div className="flex justify-between items-end mt-3"><Field label="Ghi chú"><textarea className={inputCls} style={{...inputStyle,width:520}} value={f.note} onChange={set("note")}/></Field><div className="text-right"><div className="text-[11px]" style={{color:TOKENS.muted}}>{f.type==="nhap"&&!isTransfer?"Tổng giá trị phiếu":"Giá vốn sẽ được xác định theo FIFO của đúng Kho/Công trình khi lưu"}</div>{f.type==="nhap"&&!isTransfer&&<div className="aa-display text-xl font-bold" style={{color:TOKENS.brand}}>{fmtVND(enteredTotal)}</div>}{submitError&&<div className="text-[12px] mb-2 px-2 py-1.5 rounded" style={{background:TOKENS.dangerSoft,color:TOKENS.danger,maxWidth:420}}>{submitError}</div>}<div className="flex gap-2 mt-3"><Btn onClick={onClose}>Đóng</Btn><Btn kind="primary" icon={Save} disabled={submitting} onClick={async()=>{if(submitting)return;setSubmitError("");setSubmitting(true);try{const payload={...f,operationType:fixedOperation||f.operationType,voucherNo:voucherRef.current?.value??f.voucherNo};const ok=await onSubmit(payload);if(ok){clearDraft()}else{setSubmitError("Không lưu được chứng từ. Hãy kiểm tra các trường bắt buộc hoặc kết nối máy chủ.")}}catch(e){setSubmitError(e?.message||"Có lỗi khi lưu chứng từ.")}finally{setSubmitting(false)}}}>{submitting?"Đang lưu…":submitLabel}</Btn></div></div></div>
   </Modal>;
 }
 
