@@ -12,7 +12,7 @@ import {
   PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
-const CORE_VERSION = "v31.0.0-byproject-filter-focus-ime";
+const CORE_VERSION = "v36.0.0-immutable-audit-undo";
 const WAREHOUSE_DRAFTS_KEY = "myhl_warehouse_drafts_v26";
 const loadWarehouseDrafts = () => { try { const x=JSON.parse(localStorage.getItem(WAREHOUSE_DRAFTS_KEY)||"[]"); return Array.isArray(x)?x:[]; } catch { return []; } };
 const saveWarehouseDrafts = (rows) => { try { localStorage.setItem(WAREHOUSE_DRAFTS_KEY, JSON.stringify(rows)); window.dispatchEvent(new CustomEvent("myhl:drafts-changed")); } catch {} };
@@ -937,37 +937,56 @@ export default function AssetManagementApp() {
 
   const notify = (text) => setToast(text);
 
+  // v36: Nhật ký là audit trail bất biến. Không sửa/xóa vật lý dòng cũ.
+  // Mọi hiệu chỉnh/hoàn tác đều sinh thêm một dòng nhật ký mới để giữ đầy đủ dấu vết.
   const editActivityLog = (logId) => {
     const item=(data.activityLog||[]).find(x=>x.id===logId); if(!item)return;
-    const next=window.prompt("Sửa nội dung nhật ký (không thay đổi số liệu kho):", item.action||"");
-    if(next===null)return; const action=String(next).trim(); if(!action)return;
-    setData({...data,activityLog:(data.activityLog||[]).map(x=>x.id===logId?{...x,action,editedAt:nowIso(),editedBy:currentUser.name}:x)});
-    notify("Đã sửa nội dung nhật ký");
+    const next=window.prompt("Nhập nội dung điều chỉnh. Nhật ký gốc sẽ được GIỮ NGUYÊN và hệ thống sinh thêm một dòng lưu vết điều chỉnh:", item.action||"");
+    if(next===null)return;
+    const action=String(next).trim(); if(!action)return;
+    const auditAction=`Điều chỉnh nhật ký #${logId}: “${item.action||""}” → “${action}”`;
+    setData({...data,activityLog:logAction(data.activityLog||[],auditAction,{kind:"audit_edit",editOf:logId,originalAction:item.action||"",correctedAction:action})});
+    notify("Đã lưu điều chỉnh; nhật ký gốc được giữ nguyên");
   };
 
-  const deleteActivityLog = (logId) => {
-    const item=(data.activityLog||[]).find(x=>x.id===logId); if(!item)return;
-    if(!window.confirm("Xóa dòng nhật ký này?\n\nLưu ý: thao tác này chỉ xóa dòng nhật ký, KHÔNG tự xóa phiếu kho hay thay đổi tồn kho."))return;
-    setData({...data,activityLog:(data.activityLog||[]).filter(x=>x.id!==logId)});
-    notify("Đã xóa dòng nhật ký");
-  };
-
-  const undoActivityOperation = (logId) => {
-    const item=(data.activityLog||[]).find(x=>x.id===logId); if(!item)return;
+  const undoRepairReturnFromLog = (item, sourceLabel="Hoàn tác") => {
     const voucher=item.voucherNo||((String(item.action||"").match(/(?:PN-SC-|TMC)\S+/)||[])[0]||"").replace(/[·,;]+$/g,"");
     const repairId=item.repairId||null;
     const rows=(data.warehouse||[]).filter(w=>(repairId&&String(w.repairId||"")===String(repairId)) || (voucher&&String(w.voucherNo||"")===voucher));
     const returnRows=rows.filter(w=>w.type==="nhap"&&w.operationType==="thu_hoi_sua_chua");
-    if(!returnRows.length){notify("Nhật ký này chưa có dữ liệu nghiệp vụ an toàn để hoàn tác tự động. Có thể Sửa/Xóa nhật ký; phiếu kho phải sửa tại module Kho.");return;}
+    if(!returnRows.length){notify("Không tìm thấy phiếu nhập thu hồi liên kết để hoàn tác an toàn. Nhật ký gốc không bị xóa.");return false;}
     const targetRepairIds=[...new Set(returnRows.map(w=>w.repairId).filter(Boolean))];
-    if(!window.confirm(`Hoàn tác nhập thu hồi ${voucher||""}?\n\n${returnRows.length} dòng nhập thu hồi sẽ bị gỡ khỏi tồn kho và số lượng tương ứng sẽ quay lại trạng thái Đang sửa.`))return;
+    const qty=returnRows.reduce((a,w)=>a+Number(w.quantity||0),0);
+    if(!window.confirm(`${sourceLabel} nghiệp vụ nhập thu hồi ${voucher||""}?\n\n${returnRows.length} dòng / ${qty} đơn vị nhập thu hồi sẽ bị gỡ khỏi tồn kho. Nhật ký gốc vẫn được GIỮ NGUYÊN và hệ thống sẽ sinh thêm một dòng nhật ký hoàn tác.`))return false;
     const removeIds=new Set(returnRows.map(w=>w.id));
     const removeVouchers=new Set(returnRows.map(w=>w.voucherNo));
     const nextWarehouse=(data.warehouse||[]).filter(w=>!removeIds.has(w.id));
-    const nextRepairs=(data.repairs||[]).map(r=>{if(!targetRepairIds.includes(r.id))return r; const returned=nextWarehouse.filter(w=>w.type==="nhap"&&w.operationType==="thu_hoi_sua_chua"&&String(w.repairId||"")===String(r.id)).reduce((a,w)=>a+Number(w.quantity||0),0); const total=Math.max(0,Number(r.quantity||1)); const remaining=Math.max(0,total-returned); return {...r,returnedQuantity:returned,remainingQuantity:remaining,status:remaining>1e-9?"Đang sửa":"Hoàn thành",completeDate:remaining>1e-9?"":r.completeDate,result:remaining>1e-9?(returned>0?"Thu hồi một phần":""):r.result,returnVoucherNo:remaining>1e-9?"":r.returnVoucherNo,returnLocation:remaining>1e-9?"":r.returnLocation};});
+    const nextRepairs=(data.repairs||[]).map(r=>{
+      if(!targetRepairIds.includes(r.id))return r;
+      const returned=nextWarehouse.filter(w=>w.type==="nhap"&&w.operationType==="thu_hoi_sua_chua"&&String(w.repairId||"")===String(r.id)).reduce((a,w)=>a+Number(w.quantity||0),0);
+      const total=Math.max(0,Number(r.quantity||1));
+      const remaining=Math.max(0,total-returned);
+      return {...r,returnedQuantity:returned,remainingQuantity:remaining,status:remaining>1e-9?"Đang sửa":"Hoàn thành",completeDate:remaining>1e-9?"":r.completeDate,result:remaining>1e-9?(returned>0?"Thu hồi một phần":""):r.result,returnVoucherNo:remaining>1e-9?"":r.returnVoucherNo,returnLocation:remaining>1e-9?"":r.returnLocation};
+    });
     const nextTransactions=(data.transactions||[]).filter(t=>!(t.type==="nhap_kho"&&[...removeVouchers].some(v=>String(t.title||"").includes(v))));
-    setData({...data,warehouse:nextWarehouse,repairs:nextRepairs,transactions:nextTransactions,activityLog:logAction((data.activityLog||[]).filter(x=>x.id!==logId),`Hoàn tác nhập thu hồi ${voucher||"sửa chữa"}`,{undoOf:logId,voucherNo:voucher})});
-    notify("Đã hoàn tác nhập thu hồi; số lượng còn lại đã quay về Sửa chữa — đang xử lý");
+    const auditText=`${sourceLabel} thao tác nhập thu hồi ${voucher||"sửa chữa"} — ${qty} đơn vị; khôi phục về Sửa chữa đang xử lý`;
+    setData({...data,warehouse:nextWarehouse,repairs:nextRepairs,transactions:nextTransactions,activityLog:logAction(data.activityLog||[],auditText,{kind:"audit_undo",undoOf:item.id,voucherNo:voucher,repairIds:targetRepairIds,quantity:qty})});
+    notify("Đã hoàn tác nghiệp vụ; nhật ký gốc vẫn được giữ và đã sinh thêm dòng lưu vết");
+    return true;
+  };
+
+  const deleteActivityLog = (logId) => {
+    const item=(data.activityLog||[]).find(x=>x.id===logId); if(!item)return;
+    const isRepairReturn=item.kind==="repair_return"||item.repairId||item.voucherNo||/thu hồi|hoàn thành sửa chữa/i.test(String(item.action||""));
+    if(isRepairReturn){ undoRepairReturnFromLog(item,"Xóa/Hoàn tác"); return; }
+    if(!window.confirm("Nhật ký là dữ liệu lưu vết nên không thể xóa vật lý.\n\nBạn có muốn ghi thêm một dòng ‘Yêu cầu xóa thao tác’ để lưu vết không? Nghiệp vụ gốc sẽ không tự thay đổi vì chưa có liên kết an toàn."))return;
+    setData({...data,activityLog:logAction(data.activityLog||[],`Yêu cầu xóa/hoàn tác nhật ký #${logId}: ${item.action||""}`,{kind:"audit_delete_request",deleteOf:logId})});
+    notify("Đã lưu yêu cầu xóa; nhật ký gốc được giữ nguyên");
+  };
+
+  const undoActivityOperation = (logId) => {
+    const item=(data.activityLog||[]).find(x=>x.id===logId); if(!item)return;
+    undoRepairReturnFromLog(item,"Hoàn tác");
   };
 
   /* ---------- mutations ---------- */
@@ -2525,7 +2544,7 @@ function ProjectsView({ projects, assets, onAdd, onExportExcel, onExportPdf, isA
 function ActivityLogView({ log, onEdit, onDelete, onUndo }) {
   return (
     <div className="aa-fade">
-      <div className="flex items-end justify-between mb-4"><div><h1 className="aa-display text-xl font-semibold">Nhật ký thao tác</h1><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Sửa/Xóa chỉ điều chỉnh dòng nhật ký. Hoàn tác nghiệp vụ chỉ bật với thao tác có đủ liên kết dữ liệu an toàn.</div></div></div>
+      <div className="flex items-end justify-between mb-4"><div><h1 className="aa-display text-xl font-semibold">Nhật ký thao tác</h1><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Nhật ký là lịch sử bất biến: không xóa/sửa mất dòng cũ. Sửa hoặc Hoàn tác sẽ sinh thêm dòng nhật ký mới để lưu đầy đủ dấu vết.</div></div></div>
       <div className="rounded-lg p-5" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
         <div className="space-y-3">
           {[...log].reverse().map((l) => (
@@ -2533,7 +2552,7 @@ function ActivityLogView({ log, onEdit, onDelete, onUndo }) {
               <span className="aa-mono shrink-0" style={{ color: TOKENS.muted, width: 130 }}>{fmtDate(l.date)} {new Date(l.date).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</span>
               <span className="font-medium shrink-0">{l.user}</span>
               <span className="flex-1" style={{ color: TOKENS.muted }}>{l.action}{l.editedAt?<span className="text-[10px] ml-2">(đã sửa)</span>:null}</span>
-              <div className="flex gap-1 shrink-0">{(l.kind==="repair_return"||l.repairId||l.voucherNo)&&<Btn small onClick={()=>onUndo?.(l.id)}>Hoàn tác</Btn>}<Btn small icon={Pencil} onClick={()=>onEdit?.(l.id)}>Sửa</Btn><Btn small kind="danger" icon={Trash2} onClick={()=>onDelete?.(l.id)}>Xóa</Btn></div>
+              <div className="flex gap-1 shrink-0">{(l.kind==="repair_return"||l.repairId||l.voucherNo)&&<Btn small onClick={()=>onUndo?.(l.id)}>Hoàn tác</Btn>}<Btn small icon={Pencil} onClick={()=>onEdit?.(l.id)}>Điều chỉnh</Btn><Btn small kind="danger" icon={Trash2} onClick={()=>onDelete?.(l.id)}>Xóa/Hoàn tác</Btn></div>
             </div>
           ))}
         </div>
