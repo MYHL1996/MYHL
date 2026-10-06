@@ -12,7 +12,7 @@ import {
   PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
-const CORE_VERSION = "v46.0.0-rental-save-confirmation-fix";
+const CORE_VERSION = "v47.0.0-assets-reference-save-fix";
 const WAREHOUSE_DRAFTS_KEY = "myhl_warehouse_drafts_v26";
 const loadWarehouseDrafts = () => { try { const x=JSON.parse(localStorage.getItem(WAREHOUSE_DRAFTS_KEY)||"[]"); return Array.isArray(x)?x:[]; } catch { return []; } };
 const saveWarehouseDrafts = (rows) => { try { localStorage.setItem(WAREHOUSE_DRAFTS_KEY, JSON.stringify(rows)); window.dispatchEvent(new CustomEvent("myhl:drafts-changed")); } catch {} };
@@ -1230,13 +1230,13 @@ export default function AssetManagementApp() {
 
     for (const item of items) {
       const codeKey=normalizeText(item.itemCode||"");
-      const asset=(codeKey ? assets.find(a=>normalizeText(a.code||"")===codeKey) : null) || assetsById[item.assetId];
+      const asset=(codeKey ? (data.assets||[]).find(a=>normalizeText(a.code||"")===codeKey) : null) || assetsById[item.assetId];
       if(!asset) continue;
       const qty=Number(item.quantity)||0, enteredUnitCost=Number(item.unitCost)||0;
       const fifoLotsFor=(assetId,loc,untilDate,origin)=>{
         const targetAsset=assetsById[assetId];
         const targetCode=normalizeText(targetAsset?.code||"");
-        const source=[...currentRows,...rows].filter(w=>w&&(targetCode ? ledgerCodeForRow(w,assets)===targetCode : w.assetId===assetId)&&safeText(w.ownership,"TMC")===safeText(origin,"TMC")).filter(w=>{const wl=w.locationName||(w.projectId?projectName(w.projectId):w.warehouseName||"Kho trung tâm");return wl===loc&&String(w.date||"").slice(0,10)<=untilDate;}).slice().sort((a,b)=>{const da=String(a.date||""),db=String(b.date||"");if(da!==db)return da.localeCompare(db);const ta=a.type==="nhap"?0:1,tb=b.type==="nhap"?0:1;if(ta!==tb)return ta-tb;return String(a.id||"").localeCompare(String(b.id||""));});
+        const source=[...currentRows,...rows].filter(w=>w&&(targetCode ? ledgerCodeForRow(w,data.assets||[])===targetCode : w.assetId===assetId)&&safeText(w.ownership,"TMC")===safeText(origin,"TMC")).filter(w=>{const wl=w.locationName||(w.projectId?projectName(w.projectId):w.warehouseName||"Kho trung tâm");return wl===loc&&String(w.date||"").slice(0,10)<=untilDate;}).slice().sort((a,b)=>{const da=String(a.date||""),db=String(b.date||"");if(da!==db)return da.localeCompare(db);const ta=a.type==="nhap"?0:1,tb=b.type==="nhap"?0:1;if(ta!==tb)return ta-tb;return String(a.id||"").localeCompare(String(b.id||""));});
         const lots=[];
         source.forEach(w=>{const q=Math.max(0,Number(w.quantity)||0);if(w.type==="nhap")lots.push({rowId:w.id,voucherNo:w.voucherNo,date:w.date,qty:q,remain:q,unitCost:Number(w.unitCost)||0,sourceLocation:loc});else{let left=q;for(const lot of lots){if(left<=0)break;const take=Math.min(left,Math.max(0,lot.remain));lot.remain-=take;left-=take;}}});
         return lots.filter(l=>l.remain>0.0000001);
