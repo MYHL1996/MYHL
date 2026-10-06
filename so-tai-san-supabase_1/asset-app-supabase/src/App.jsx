@@ -933,9 +933,42 @@ export default function AssetManagementApp() {
   const projectName = (id) => data.projects.find((e) => e.id === id)?.name || "—";
   const assetsById = Object.fromEntries(data.assets.map((a) => [a.id, a]));
 
-  const logAction = (list, action) => [...list, { id: uid("lg"), date: nowIso(), user: currentUser.name, action }];
+  const logAction = (list, action, meta={}) => [...list, { id: uid("lg"), date: nowIso(), user: currentUser.name, action, ...meta }];
 
   const notify = (text) => setToast(text);
+
+  const editActivityLog = (logId) => {
+    const item=(data.activityLog||[]).find(x=>x.id===logId); if(!item)return;
+    const next=window.prompt("Sửa nội dung nhật ký (không thay đổi số liệu kho):", item.action||"");
+    if(next===null)return; const action=String(next).trim(); if(!action)return;
+    setData({...data,activityLog:(data.activityLog||[]).map(x=>x.id===logId?{...x,action,editedAt:nowIso(),editedBy:currentUser.name}:x)});
+    notify("Đã sửa nội dung nhật ký");
+  };
+
+  const deleteActivityLog = (logId) => {
+    const item=(data.activityLog||[]).find(x=>x.id===logId); if(!item)return;
+    if(!window.confirm("Xóa dòng nhật ký này?\n\nLưu ý: thao tác này chỉ xóa dòng nhật ký, KHÔNG tự xóa phiếu kho hay thay đổi tồn kho."))return;
+    setData({...data,activityLog:(data.activityLog||[]).filter(x=>x.id!==logId)});
+    notify("Đã xóa dòng nhật ký");
+  };
+
+  const undoActivityOperation = (logId) => {
+    const item=(data.activityLog||[]).find(x=>x.id===logId); if(!item)return;
+    const voucher=item.voucherNo||((String(item.action||"").match(/(?:PN-SC-|TMC)\S+/)||[])[0]||"").replace(/[·,;]+$/g,"");
+    const repairId=item.repairId||null;
+    const rows=(data.warehouse||[]).filter(w=>(repairId&&String(w.repairId||"")===String(repairId)) || (voucher&&String(w.voucherNo||"")===voucher));
+    const returnRows=rows.filter(w=>w.type==="nhap"&&w.operationType==="thu_hoi_sua_chua");
+    if(!returnRows.length){notify("Nhật ký này chưa có dữ liệu nghiệp vụ an toàn để hoàn tác tự động. Có thể Sửa/Xóa nhật ký; phiếu kho phải sửa tại module Kho.");return;}
+    const targetRepairIds=[...new Set(returnRows.map(w=>w.repairId).filter(Boolean))];
+    if(!window.confirm(`Hoàn tác nhập thu hồi ${voucher||""}?\n\n${returnRows.length} dòng nhập thu hồi sẽ bị gỡ khỏi tồn kho và số lượng tương ứng sẽ quay lại trạng thái Đang sửa.`))return;
+    const removeIds=new Set(returnRows.map(w=>w.id));
+    const removeVouchers=new Set(returnRows.map(w=>w.voucherNo));
+    const nextWarehouse=(data.warehouse||[]).filter(w=>!removeIds.has(w.id));
+    const nextRepairs=(data.repairs||[]).map(r=>{if(!targetRepairIds.includes(r.id))return r; const returned=nextWarehouse.filter(w=>w.type==="nhap"&&w.operationType==="thu_hoi_sua_chua"&&String(w.repairId||"")===String(r.id)).reduce((a,w)=>a+Number(w.quantity||0),0); const total=Math.max(0,Number(r.quantity||1)); const remaining=Math.max(0,total-returned); return {...r,returnedQuantity:returned,remainingQuantity:remaining,status:remaining>1e-9?"Đang sửa":"Hoàn thành",completeDate:remaining>1e-9?"":r.completeDate,result:remaining>1e-9?(returned>0?"Thu hồi một phần":""):r.result,returnVoucherNo:remaining>1e-9?"":r.returnVoucherNo,returnLocation:remaining>1e-9?"":r.returnLocation};});
+    const nextTransactions=(data.transactions||[]).filter(t=>!(t.type==="nhap_kho"&&[...removeVouchers].some(v=>String(t.title||"").includes(v))));
+    setData({...data,warehouse:nextWarehouse,repairs:nextRepairs,transactions:nextTransactions,activityLog:logAction((data.activityLog||[]).filter(x=>x.id!==logId),`Hoàn tác nhập thu hồi ${voucher||"sửa chữa"}`,{undoOf:logId,voucherNo:voucher})});
+    notify("Đã hoàn tác nhập thu hồi; số lượng còn lại đã quay về Sửa chữa — đang xử lý");
+  };
 
   /* ---------- mutations ---------- */
 
@@ -1399,7 +1432,7 @@ export default function AssetManagementApp() {
 
   const finalizeRepair = (repairId, form) => {
     const rp=data.repairs.find(r=>r.id===repairId); if(!rp) return false;
-    if(rp.status==="Hoàn thành" || rp.completeDate){ notify("Hồ sơ sửa chữa này đã hoàn thành"); return false; }
+    if(rp.status==="Hoàn thành"){ notify("Hồ sơ sửa chữa này đã hoàn thành"); return false; }
     const asset=assetsById[rp.assetId]; const date=parseDateValue(form.completeDate||nowIso().slice(0,10));
     const cost=Math.max(0,Number(form.cost||0)); const attachments=Array.isArray(form.attachments)?form.attachments:[];
     if(!rp.assetId && form.result==="external_return"){setData({...data,repairs:data.repairs.map(r=>r.id===repairId?{...r,status:"Hoàn thành",completeDate:date,result:"Trả đơn vị/chủ sở hữu",cost,note:form.note||"",attachments:[...(r.attachments||[]),...attachments]}:r),costHistory:data.costHistory,activityLog:logAction(data.activityLog,`Hoàn thành sửa chữa thiết bị ngoài hệ thống ${rp.externalCode||rp.externalName}`)});notify("Đã hoàn thành và trả thiết bị cho đơn vị/chủ sở hữu");return true;}
@@ -1411,12 +1444,35 @@ export default function AssetManagementApp() {
     }
     const project=data.projects.find(p=>p.id===form.projectId); if(!project){notify("Vui lòng chọn Công trình/Kho nhận lại");return false;}
     const returnVoucherNo=String(form.returnVoucherNo||"").trim() || `PN-SC-${date.replaceAll("-","")}-${String((data.warehouse||[]).filter(w=>String(w.voucherNo||"").startsWith(`PN-SC-${date.replaceAll("-","")}-`)).length+1).padStart(3,"0")}`;
-    if((data.warehouse||[]).some(w=>String(w.voucherNo||"").trim().toLowerCase()===returnVoucherNo.toLowerCase())){notify(`Số phiếu ${returnVoucherNo} đã tồn tại`);return false;}
-    const qty=Number(form.quantity||rp.quantity||1); if(!(qty>0)){notify("Số lượng thu hồi phải lớn hơn 0");return false;} if(Number(rp.quantity||0)>0 && qty>Number(rp.quantity)+1e-9){notify(`Số lượng thu hồi không được vượt quá số lượng xuất sửa chữa (${rp.quantity})`);return false;}
+    // Một phiếu nhập thu hồi có thể chứa nhiều mã tài sản sửa chữa khác nhau.
+    // Nếu số phiếu đã tồn tại, chỉ cho phép ghép thêm dòng khi đó chính là phiếu
+    // nhập thu hồi sửa chữa cùng Công trình/Kho nhận và cùng ngày hạch toán.
+    const existingReturnRows=(data.warehouse||[]).filter(w=>String(w.voucherNo||"").trim().toLowerCase()===returnVoucherNo.toLowerCase());
+    if(existingReturnRows.length){
+      const canAppend=existingReturnRows.every(w=>
+        w.type==="nhap" &&
+        w.operationType==="thu_hoi_sua_chua" &&
+        String(w.projectId||"")===String(project.id||"") &&
+        parseDateValue(w.date)===date
+      );
+      if(!canAppend){
+        notify(`Số phiếu ${returnVoucherNo} đã tồn tại nhưng không phải phiếu nhập thu hồi cùng ngày và cùng Công trình/Kho`);
+        return false;
+      }
+      if(existingReturnRows.some(w=>String(w.repairId||"")===String(repairId))){
+        notify(`Hồ sơ sửa chữa này đã có trong phiếu ${returnVoucherNo}`);
+        return false;
+      }
+    }
+    const totalRepairQty=Math.max(0,Number(rp.quantity||1));
+    const alreadyReturned=(data.warehouse||[]).filter(w=>w.type==="nhap"&&w.operationType==="thu_hoi_sua_chua"&&String(w.repairId||"")===String(repairId)).reduce((sum,w)=>sum+Number(w.quantity||0),0);
+    const remainingBefore=Math.max(0,totalRepairQty-alreadyReturned);
+    const qty=Number(form.quantity||remainingBefore||1); if(!(qty>0)){notify("Số lượng thu hồi phải lớn hơn 0");return false;} if(qty>remainingBefore+1e-9){notify(`Chỉ còn ${remainingBefore} ${asset?.unit||""} đang sửa; không thể thu hồi ${qty}`);return false;}
+    const returnedAfter=alreadyReturned+qty, remainingAfter=Math.max(0,totalRepairQty-returnedAfter), isFullyReturned=remainingAfter<=1e-9;
     const returnUnitCost=Number(rp.sourceUnitCost)||0; const inRow={id:uid("wh"),voucherNo:returnVoucherNo,assetId:rp.assetId,type:"nhap",quantity:qty,date,unitCost:returnUnitCost,total:qty*returnUnitCost,unit:asset?.unit||"Cái",receiver:form.receiver||"",supplier:rp.vendor||"",description:form.note||`Nhập thu hồi sau sửa chữa ${rp.warehouseVoucherNo||""}`,note:form.note||"",category:asset?.category||"Khác",assetGroup:asset?.assetGroup||"Thiết bị chính",ownership:asset?.ownership||"Công ty",locationType:"project",locationName:project.name,warehouseName:"",projectId:project.id,itemName:asset?.name||"",itemCode:asset?.code||"",operationType:"thu_hoi_sua_chua",operationLabel:OPERATION_LABELS.thu_hoi_sua_chua,counterpartyLocation:rp.sourceLocation||"",repairVendor:rp.vendor||"",repairId,sourceRepairVoucher:rp.warehouseVoucherNo||"",attachments};
-    const tx={id:uid("tx"),assetId:rp.assetId,type:"nhap_kho",date,title:`Nhập thu hồi sửa chữa ${returnVoucherNo}`,detail:`${asset?.name||""} · ${project.name} · từ ${rp.warehouseVoucherNo||"phiếu sửa chữa"}`,amount:0};
-    setData({...data,warehouse:[inRow,...(data.warehouse||[])],transactions:[tx,...data.transactions],assets:data.assets.map(a=>a.id===rp.assetId?{...a,status:STATUS.UNUSED,projectId:project.id}:a),repairs:data.repairs.map(r=>r.id===repairId?{...r,status:"Hoàn thành",completeDate:date,result:"Nhập thu hồi",returnProjectId:project.id,returnLocation:project.name,returnVoucherNo,cost,note:form.note||"",attachments:[...(r.attachments||[]),...attachments]}:r),costHistory:cost>0?[{id:uid("cp"),assetId:rp.assetId,type:"Sửa chữa",date,amount:cost,description:form.note||rp.description,vendor:rp.vendor||"",repairId},...data.costHistory]:data.costHistory,activityLog:logAction(data.activityLog,`Hoàn thành sửa chữa ${asset?.code||""} → ${project.name} · ${returnVoucherNo}`)});
-    notify(`Đã hoàn thành sửa chữa và lập phiếu nhập thu hồi ${returnVoucherNo}`); return true;
+    const tx={id:uid("tx"),assetId:rp.assetId,type:"nhap_kho",date,title:`Nhập thu hồi sửa chữa ${returnVoucherNo}`,detail:`${asset?.name||""} · ${project.name} · thu hồi ${qty}/${totalRepairQty}; còn sửa ${remainingAfter}`,amount:0};
+    setData({...data,warehouse:[inRow,...(data.warehouse||[])],transactions:[tx,...data.transactions],assets:data.assets.map(a=>a.id===rp.assetId?{...a,status:isFullyReturned?STATUS.UNUSED:STATUS.REPAIR,projectId:isFullyReturned?project.id:a.projectId}:a),repairs:data.repairs.map(r=>r.id===repairId?{...r,status:isFullyReturned?"Hoàn thành":"Đang sửa",completeDate:isFullyReturned?date:"",result:isFullyReturned?"Nhập thu hồi":"Thu hồi một phần",returnedQuantity:returnedAfter,remainingQuantity:remainingAfter,returnProjectId:project.id,returnLocation:project.name,returnVoucherNo:isFullyReturned?returnVoucherNo:(r.returnVoucherNo||""),returnVouchers:[...new Set([...(r.returnVouchers||[]),returnVoucherNo])],cost,note:form.note||"",attachments:[...(r.attachments||[]),...attachments]}:r),costHistory:cost>0?[{id:uid("cp"),assetId:rp.assetId,type:"Sửa chữa",date,amount:cost,description:form.note||rp.description,vendor:rp.vendor||"",repairId},...data.costHistory]:data.costHistory,activityLog:logAction(data.activityLog,`${isFullyReturned?"Hoàn thành":"Thu hồi một phần"} sửa chữa ${asset?.code||""} · ${qty}/${totalRepairQty} → ${project.name} · ${returnVoucherNo}`,{kind:"repair_return",repairId,voucherNo:returnVoucherNo,quantity:qty})});
+    notify(isFullyReturned ? `Đã thu hồi đủ ${returnedAfter}/${totalRepairQty}; hồ sơ sửa chữa đã hoàn thành` : `Đã nhập thu hồi ${qty}; còn ${remainingAfter} ${asset?.unit||""} đang sửa`); return true;
   };
 
   const liquidateAsset = (id, value, reason) => {
@@ -1729,7 +1785,7 @@ export default function AssetManagementApp() {
               )}
               {active === "byProject" && <ByProject data={data} projectName={projectName} onSelect={(id) => { setActive("catalog"); setSelectedAssetId(id); }} />}
               {active === "depreciation" && <Depreciation assets={data.assets} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
-              {active === "repair" && <RepairView repairs={data.repairs.filter((r) => r.status === "Đang sửa")} assetsById={assetsById} onComplete={completeRepair} onEdit={repairId=>setModal({type:"repairEdit",repairId})} onAdd={()=>setModal({type:"repairDirect"})} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
+              {active === "repair" && <RepairView repairs={data.repairs.filter((r) => r.status === "Đang sửa").map(r=>{const returned=(data.warehouse||[]).filter(w=>w.type==="nhap"&&w.operationType==="thu_hoi_sua_chua"&&String(w.repairId||"")===String(r.id)).reduce((a,w)=>a+Number(w.quantity||0),0);return {...r,returnedQuantity:returned,remainingQuantity:Math.max(0,Number(r.quantity||1)-returned)}})} assetsById={assetsById} onComplete={completeRepair} onEdit={repairId=>setModal({type:"repairEdit",repairId})} onAdd={()=>setModal({type:"repairDirect"})} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "repairHistory" && <RepairHistory repairs={data.repairs} assetsById={assetsById} assets={data.assets} onAdd={()=>setModal({type:"repairDirect"})} onEdit={repairId=>setModal({type:"repairHistoryEdit",repairId})} onDelete={deleteRepairHistory} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "liquidation" && <LiquidationView liquidations={data.liquidations} assetsById={assetsById} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "minutes" && <MinutesView minutes={data.minutes} assetsById={assetsById} warehouse={data.warehouse||[]} repairs={data.repairs||[]} projects={data.projects||[]} onAdd={()=>setModal({type:"documentAdd"})} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
@@ -1763,7 +1819,7 @@ export default function AssetManagementApp() {
               {active === "suppliers" && <SupplierCatalog suppliers={settings.suppliers || []} isAdmin={isAdmin} onAdd={addSupplier} onEdit={editSupplier} onDeleteMany={deleteSuppliers} onImportExcel={(file)=>importExcel(file,"suppliers")} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "costHistory" && <CostHistoryView costHistory={data.costHistory} assetsById={assetsById} onAdd={() => setModal({ type: "costHistory" })} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
               {active === "projects" && <ProjectsView projects={data.projects} assets={data.assets} isAdmin={isAdmin} onDelete={deleteProject} onAdd={() => setModal({ type: "addProject" })} onExportExcel={doExportExcel} onExportPdf={doExportPdf} />}
-              {active === "activityLog" && <ActivityLogView log={data.activityLog} />}
+              {active === "activityLog" && <ActivityLogView log={data.activityLog} onEdit={editActivityLog} onDelete={deleteActivityLog} onUndo={undoActivityOperation} />}
               {active === "settings" && isAdmin && (
                 <SettingsView
                   settings={settings} onSetCompanyName={setCompanyName}
@@ -1844,7 +1900,7 @@ export default function AssetManagementApp() {
         {modal?.type === "repairHistoryEdit" && <RepairHistoryEditModal repair={data.repairs.find(r=>r.id===modal.repairId)} assets={data.assets} onClose={()=>setModal(null)} onSubmit={f=>{if(updateRepairHistory(modal.repairId,f))setModal(null)}} />}
         {modal?.type === "repairDirect" && <DirectRepairModal assets={data.assets} projects={data.projects} onClose={()=>setModal(null)} onSubmit={f=>{if(createDirectRepair(f))setModal(null)}} />}
         {modal?.type === "documentAdd" && <DocumentModal assets={data.assets} projects={data.projects} onClose={()=>setModal(null)} onSubmit={f=>{if(createDocument(f))setModal(null)}} />}
-        {modal?.type === "repairComplete" && <RepairCompleteModal repair={data.repairs.find(r=>r.id===modal.repairId)} asset={assetsById[data.repairs.find(r=>r.id===modal.repairId)?.assetId]} projects={data.projects} onClose={()=>setModal(null)} onSubmit={f=>{if(finalizeRepair(modal.repairId,f))setModal(null)}} />}
+        {modal?.type === "repairComplete" && <RepairCompleteModal repair={data.repairs.find(r=>r.id===modal.repairId)} asset={assetsById[data.repairs.find(r=>r.id===modal.repairId)?.assetId]} warehouse={data.warehouse||[]} projects={data.projects} onClose={()=>setModal(null)} onSubmit={f=>{if(finalizeRepair(modal.repairId,f))setModal(null)}} />}
         {modal?.type === "costHistory" && <CostHistoryModal assets={data.assets} onClose={()=>setModal(null)} onSubmit={f=>{addCostHistory(f);setModal(null)}} />}
         {modal?.type === "changePassword" && (
           <ChangePasswordModal onClose={() => setModal(null)} onSubmit={async (oldPw, newPw) => { const ok = await changeOwnPassword(oldPw, newPw); if (ok) setModal(null); }} />
@@ -2347,7 +2403,7 @@ function RepairView({ repairs, assetsById, onComplete, onEdit, onAdd, onExportEx
   const info=r=>assetsById[r.assetId]||{code:r.externalCode||"NGOAI-HT",name:r.externalName||"Thiết bị ngoài hệ thống"};
   const headers=["Mã tài sản","Tên tài sản","Đơn vị sở hữu","Ngày gửi","Mô tả / lỗi","Chi phí","Trạng thái"];
   const rows=repairs.map(r=>{const a=info(r);return[a.code||"",a.name||"",r.ownerCompany||"",fmtDate(r.date),r.description||"",Number(r.cost||0),r.status||""]});
-  return <div className="aa-fade"><div className="flex items-center justify-between mb-4"><div><h1 className="aa-display text-xl font-semibold">Sửa chữa — đang xử lý</h1><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Theo dõi cả tài sản TMC và máy/thiết bị ngoài hệ thống.</div></div><div className="flex gap-2"><ExportBar onExcel={()=>onExportExcel("sua-chua-dang-xu-ly",headers,rows)} onPdf={()=>onExportPdf("Sửa chữa — đang xử lý",headers,rows)}/><Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm sửa chữa</Btn></div></div>{repairs.length===0?<div className="rounded-lg" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><EmptyState text="Không có hồ sơ sửa chữa đang mở" sub="Bấm Thêm sửa chữa hoặc xuất đi sửa chữa từ Kho/Công trình."/></div>:<div className="grid grid-cols-2 gap-3">{repairs.map(r=>{const a=info(r);return <div key={r.id} className="rounded-lg p-4" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><div className="flex justify-between items-start"><div><Tag>{a.code}</Tag><div className="text-[13px] font-medium mt-1">{a.name}</div>{r.ownerCompany&&<div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Đơn vị sở hữu: {r.ownerCompany}</div>}</div><span className="text-[11px] px-2 py-0.5 rounded-full" style={{background:TOKENS.goldSoft,color:TOKENS.gold}}>{r.status}</span></div><div className="text-[12.5px] mt-2" style={{color:TOKENS.muted}}>{r.description}</div><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Nguồn: <b>{r.warehouseVoucherNo?`Phiếu xuất ${r.warehouseVoucherNo}`:"Thêm trực tiếp"}</b> · Nơi xuất/đang phục vụ: <b>{r.sourceLocation||r.serviceLocation||"—"}</b></div><div className="flex justify-between items-center mt-3"><span className="aa-mono text-[12px]">{fmtDate(r.date)} · {fmtVND(r.cost)}</span><div className="flex gap-2"><Btn small icon={Pencil} onClick={()=>onEdit(r.id)}>Cập nhật</Btn><Btn small kind="primary" onClick={()=>onComplete(r.id)}>Hoàn thành sửa chữa</Btn></div></div></div>})}</div>}</div>;
+  return <div className="aa-fade"><div className="flex items-center justify-between mb-4"><div><h1 className="aa-display text-xl font-semibold">Sửa chữa — đang xử lý</h1><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Theo dõi cả tài sản TMC và máy/thiết bị ngoài hệ thống.</div></div><div className="flex gap-2"><ExportBar onExcel={()=>onExportExcel("sua-chua-dang-xu-ly",headers,rows)} onPdf={()=>onExportPdf("Sửa chữa — đang xử lý",headers,rows)}/><Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm sửa chữa</Btn></div></div>{repairs.length===0?<div className="rounded-lg" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><EmptyState text="Không có hồ sơ sửa chữa đang mở" sub="Bấm Thêm sửa chữa hoặc xuất đi sửa chữa từ Kho/Công trình."/></div>:<div className="grid grid-cols-2 gap-3">{repairs.map(r=>{const a=info(r);return <div key={r.id} className="rounded-lg p-4" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><div className="flex justify-between items-start"><div><Tag>{a.code}</Tag><div className="text-[13px] font-medium mt-1">{a.name}</div>{r.ownerCompany&&<div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Đơn vị sở hữu: {r.ownerCompany}</div>}</div><span className="text-[11px] px-2 py-0.5 rounded-full" style={{background:TOKENS.goldSoft,color:TOKENS.gold}}>{r.status}</span></div><div className="text-[12.5px] mt-2" style={{color:TOKENS.muted}}>{r.description}</div><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Nguồn: <b>{r.warehouseVoucherNo?`Phiếu xuất ${r.warehouseVoucherNo}`:"Thêm trực tiếp"}</b> · Nơi xuất/đang phục vụ: <b>{r.sourceLocation||r.serviceLocation||"—"}</b> · SL xuất sửa: <b>{Number(r.quantity||1)}</b> · Đã thu hồi: <b>{Number(r.returnedQuantity||0)}</b> · Còn sửa: <b style={{color:TOKENS.danger}}>{Math.max(0,Number(r.quantity||1)-Number(r.returnedQuantity||0))}</b></div><div className="flex justify-between items-center mt-3"><span className="aa-mono text-[12px]">{fmtDate(r.date)} · {fmtVND(r.cost)}</span><div className="flex gap-2"><Btn small icon={Pencil} onClick={()=>onEdit(r.id)}>Cập nhật</Btn><Btn small kind="primary" onClick={()=>onComplete(r.id)}>Hoàn thành sửa chữa</Btn></div></div></div>})}</div>}</div>;
 }
 
 function RepairHistory({ repairs, assetsById, assets=[], onAdd, onEdit, onDelete, onExportExcel, onExportPdf }) {
@@ -2466,17 +2522,18 @@ function ProjectsView({ projects, assets, onAdd, onExportExcel, onExportPdf, isA
   return <div className="aa-fade"><div className="flex items-center justify-between mb-4"><h1 className="aa-display text-xl font-semibold">Công trình / Kho</h1><div className="flex gap-2"><ExportBar onExcel={()=>onExportExcel("cong-trinh",headers,rows)} onPdf={()=>onExportPdf("Công trình",headers,rows)}/><Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm Công trình/Kho</Btn></div></div><div className="rounded-lg overflow-hidden" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><table className="w-full"><thead><tr>{headers.map(h=><Th key={h}>{h}</Th>)}{isAdmin&&<Th>Thao tác</Th>}</tr></thead><tbody>{projects.map(p=><tr key={p.id} className="aa-row"><Td>{p.commander}</Td><Td>{p.name}</Td><Td>{p.address}</Td><Td>{p.workItem}</Td><Td>{fmtDate(p.startDate)}</Td><Td>{fmtDate(p.endDate)}</Td><Td right mono>{assets.filter(a=>a.projectId===p.id).length}</Td>{isAdmin&&<Td><button className="p-1 rounded hover:bg-black/10" title="Xoá công trình" onClick={()=>onDelete(p.id)}><Trash2 size={14}/></button></Td>}</tr>)}</tbody></table>{projects.length===0&&<EmptyState text="Chưa có Công trình/Kho"/>}</div></div>;
 }
 
-function ActivityLogView({ log }) {
+function ActivityLogView({ log, onEdit, onDelete, onUndo }) {
   return (
     <div className="aa-fade">
-      <h1 className="aa-display text-xl font-semibold mb-4">Nhật ký thao tác</h1>
+      <div className="flex items-end justify-between mb-4"><div><h1 className="aa-display text-xl font-semibold">Nhật ký thao tác</h1><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Sửa/Xóa chỉ điều chỉnh dòng nhật ký. Hoàn tác nghiệp vụ chỉ bật với thao tác có đủ liên kết dữ liệu an toàn.</div></div></div>
       <div className="rounded-lg p-5" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
         <div className="space-y-3">
           {[...log].reverse().map((l) => (
-            <div key={l.id} className="flex gap-3 text-[13px]">
+            <div key={l.id} className="flex gap-3 text-[13px] items-start">
               <span className="aa-mono shrink-0" style={{ color: TOKENS.muted, width: 130 }}>{fmtDate(l.date)} {new Date(l.date).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</span>
               <span className="font-medium shrink-0">{l.user}</span>
-              <span style={{ color: TOKENS.muted }}>{l.action}</span>
+              <span className="flex-1" style={{ color: TOKENS.muted }}>{l.action}{l.editedAt?<span className="text-[10px] ml-2">(đã sửa)</span>:null}</span>
+              <div className="flex gap-1 shrink-0">{(l.kind==="repair_return"||l.repairId||l.voucherNo)&&<Btn small onClick={()=>onUndo?.(l.id)}>Hoàn tác</Btn>}<Btn small icon={Pencil} onClick={()=>onEdit?.(l.id)}>Sửa</Btn><Btn small kind="danger" icon={Trash2} onClick={()=>onDelete?.(l.id)}>Xóa</Btn></div>
             </div>
           ))}
         </div>
@@ -2643,10 +2700,12 @@ function AttachmentPicker({ value = [], onChange }) {
   return <div className="rounded-md p-2" style={{border:`1px dashed ${TOKENS.border}`}}><label className="inline-flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer text-[12px] font-medium" style={{background:TOKENS.paper}}><UploadCloud size={14}/>Đính kèm ảnh / PDF / Excel / Word<input type="file" multiple accept=".jpg,.jpeg,.png,.pdf,.xls,.xlsx,.doc,.docx" className="hidden" onChange={pick}/></label>{files.length>0&&<div className="mt-2 space-y-1">{files.map(a=><div key={a.id||a.name} className="flex items-center justify-between gap-2 text-[11px]"><span className="truncate">{a.name} · {Math.ceil((a.size||0)/1024)} KB</span><span className="flex gap-2"><button type="button" onClick={()=>open(a)}>{/\.(docx?|xlsx?)$/i.test(a.name||"")?"Mở/Tải":"Xem"}</button><button type="button" onClick={()=>download(a)}>Tải</button><button type="button" onClick={()=>onChange?.(files.filter(x=>x!==a))} style={{color:TOKENS.danger}}>Xóa</button></span></div>)}</div>}</div>;
 }
 
-function RepairCompleteModal({ repair, asset, projects, onClose, onSubmit }){
-  const [f,setF]=useState({result:repair?.assetId?"return":"external_return",projectId:repair?.sourceProjectId||"",completeDate:nowIso().slice(0,10),returnVoucherNo:"",quantity:Number(repair?.quantity||1),cost:Number(repair?.cost||0),receiver:"",note:"",liquidationValue:0,attachments:[]});
+function RepairCompleteModal({ repair, asset, warehouse=[], projects, onClose, onSubmit }){
+  const alreadyReturned=(warehouse||[]).filter(w=>w.type==="nhap"&&w.operationType==="thu_hoi_sua_chua"&&String(w.repairId||"")===String(repair?.id||"")).reduce((a,w)=>a+Number(w.quantity||0),0);
+  const remaining=Math.max(0,Number(repair?.quantity||1)-alreadyReturned);
+  const [f,setF]=useState({result:repair?.assetId?"return":"external_return",projectId:repair?.sourceProjectId||"",completeDate:nowIso().slice(0,10),returnVoucherNo:"",quantity:remaining||1,cost:Number(repair?.cost||0),receiver:"",note:"",liquidationValue:0,attachments:[]});
   const set=k=>e=>{const v=e.target.value;setF(p=>({...p,[k]:v}))};
-  return <Modal title={`Hoàn thành sửa chữa — ${asset?.code||""}`} onClose={onClose} wide><div className="rounded-md p-3 mb-3 text-[12px]" style={{background:TOKENS.paper,border:`1px solid ${TOKENS.border}`}}>Phiếu xuất sửa chữa: <b>{repair?.warehouseVoucherNo||"—"}</b> · Công trình/Kho xuất: <b>{repair?.sourceLocation||"—"}</b></div><Field label="Kết quả sau sửa chữa"><select className={inputCls} style={inputStyle} value={f.result} onChange={set("result")}>{!repair?.assetId&&<option value="external_return">Trả lại đơn vị / chủ sở hữu</option>}<option value="return">Nhập thu hồi về Công trình/Kho</option>{repair?.assetId&&<option value="liquidation">Chuyển sang Thanh lý</option>}</select></Field>{f.result==="external_return"?<div className="rounded-md p-3 mb-3 text-[12px]" style={{background:TOKENS.infoSoft}}>Thiết bị ngoài hệ thống sẽ được ghi nhận hoàn thành và trả lại đơn vị/chủ sở hữu; không phát sinh phiếu nhập kho.</div>:f.result==="return"?<><Field label="Công trình/Kho nhận *"><select className={inputCls} style={inputStyle} value={f.projectId} onChange={set("projectId")}><option value="">Chọn công trình/kho</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></Field><div className="grid grid-cols-2 gap-3"><Field label="Số phiếu nhập thu hồi"><input className={inputCls} style={inputStyle} value={f.returnVoucherNo} onChange={set("returnVoucherNo")} placeholder="Để trống để tự sinh"/></Field><Field label="Số lượng thu hồi"><input type="number" min="0.01" step="0.01" className={inputCls} style={inputStyle} value={f.quantity} onChange={set("quantity")}/></Field></div></>:<Field label="Giá trị thanh lý"><input type="number" min="0" className={inputCls} style={inputStyle} value={f.liquidationValue} onChange={set("liquidationValue")}/></Field>}<div className="grid grid-cols-2 gap-3"><Field label="Ngày hoàn thành"><input type="date" className={inputCls} style={inputStyle} value={f.completeDate} onChange={set("completeDate")}/></Field><Field label="Chi phí sửa chữa"><input type="number" min="0" className={inputCls} style={inputStyle} value={f.cost} onChange={set("cost")}/></Field></div><Field label="Diễn giải / kết quả"><textarea className={inputCls} style={inputStyle} value={f.note} onChange={set("note")}/></Field><Field label="Chứng từ sửa chữa"><AttachmentPicker value={f.attachments} onChange={attachments=>setF(p=>({...p,attachments}))}/></Field><div className="flex justify-end gap-2 mt-3"><Btn onClick={onClose}>Hủy</Btn><Btn kind="primary" icon={Save} onClick={()=>onSubmit(f)}>{f.result==="external_return"?"Hoàn thành & trả chủ sở hữu":f.result==="return"?"Hoàn thành & lập phiếu nhập thu hồi":"Hoàn thành & chuyển thanh lý"}</Btn></div></Modal>;
+  return <Modal title={`Hoàn thành sửa chữa — ${asset?.code||""}`} onClose={onClose} wide><div className="rounded-md p-3 mb-3 text-[12px]" style={{background:TOKENS.paper,border:`1px solid ${TOKENS.border}`}}>Phiếu xuất sửa chữa: <b>{repair?.warehouseVoucherNo||"—"}</b> · Công trình/Kho xuất: <b>{repair?.sourceLocation||"—"}</b> · Đã thu hồi: <b>{alreadyReturned}</b> / {Number(repair?.quantity||1)} · Còn sửa: <b style={{color:TOKENS.danger}}>{remaining}</b></div><Field label="Kết quả sau sửa chữa"><select className={inputCls} style={inputStyle} value={f.result} onChange={set("result")}>{!repair?.assetId&&<option value="external_return">Trả lại đơn vị / chủ sở hữu</option>}<option value="return">Nhập thu hồi về Công trình/Kho</option>{repair?.assetId&&<option value="liquidation">Chuyển sang Thanh lý</option>}</select></Field>{f.result==="external_return"?<div className="rounded-md p-3 mb-3 text-[12px]" style={{background:TOKENS.infoSoft}}>Thiết bị ngoài hệ thống sẽ được ghi nhận hoàn thành và trả lại đơn vị/chủ sở hữu; không phát sinh phiếu nhập kho.</div>:f.result==="return"?<><Field label="Công trình/Kho nhận *"><select className={inputCls} style={inputStyle} value={f.projectId} onChange={set("projectId")}><option value="">Chọn công trình/kho</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></Field><div className="grid grid-cols-2 gap-3"><Field label="Số phiếu nhập thu hồi"><input className={inputCls} style={inputStyle} value={f.returnVoucherNo} onChange={set("returnVoucherNo")} placeholder="Để trống để tự sinh"/><div className="mt-1 text-[10px]" style={{color:TOKENS.muted}}>Có thể nhập lại số phiếu thu hồi đã lập để ghép nhiều mã thiết bị vào cùng 1 phiếu, nếu cùng ngày và cùng Công trình/Kho nhận.</div></Field><Field label="Số lượng thu hồi"><input type="number" min="0.01" step="0.01" className={inputCls} style={inputStyle} value={f.quantity} onChange={set("quantity")}/></Field></div></>:<Field label="Giá trị thanh lý"><input type="number" min="0" className={inputCls} style={inputStyle} value={f.liquidationValue} onChange={set("liquidationValue")}/></Field>}<div className="grid grid-cols-2 gap-3"><Field label="Ngày hoàn thành"><SmartViDateInput value={f.completeDate} onChange={value=>setF(prev=>({...prev,completeDate:value}))}/></Field><Field label="Chi phí sửa chữa"><input type="number" min="0" className={inputCls} style={inputStyle} value={f.cost} onChange={set("cost")}/></Field></div><Field label="Diễn giải / kết quả"><textarea className={inputCls} style={inputStyle} value={f.note} onChange={set("note")}/></Field><Field label="Chứng từ sửa chữa"><AttachmentPicker value={f.attachments} onChange={attachments=>setF(p=>({...p,attachments}))}/></Field><div className="flex justify-end gap-2 mt-3"><Btn onClick={onClose}>Hủy</Btn><Btn kind="primary" icon={Save} onClick={()=>onSubmit(f)}>{f.result==="external_return"?"Hoàn thành & trả chủ sở hữu":f.result==="return"?"Hoàn thành & lập phiếu nhập thu hồi":"Hoàn thành & chuyển thanh lý"}</Btn></div></Modal>;
 }
 
 function RepairEditModal({repair,onClose,onSubmit}){
