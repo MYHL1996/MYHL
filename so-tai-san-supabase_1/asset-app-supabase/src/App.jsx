@@ -12,7 +12,7 @@ import {
   PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
-const CORE_VERSION = "v55.0.0-two-level-origin-filter";
+const CORE_VERSION = "v56.0.0-two-level-origin-filter";
 const WAREHOUSE_DRAFTS_KEY = "myhl_warehouse_drafts_v26";
 const loadWarehouseDrafts = () => { try { const x=JSON.parse(localStorage.getItem(WAREHOUSE_DRAFTS_KEY)||"[]"); return Array.isArray(x)?x:[]; } catch { return []; } };
 const saveWarehouseDrafts = (rows) => { try { localStorage.setItem(WAREHOUSE_DRAFTS_KEY, JSON.stringify(rows)); window.dispatchEvent(new CustomEvent("myhl:drafts-changed")); } catch {} };
@@ -2559,9 +2559,9 @@ function ByProject({ data, projectName, onSelect }) {
   const categories=[...new Set(assets.map(a=>safeText(a.category)).filter(Boolean))].sort();
   const groups=[...new Set(assets.map(a=>safeText(a.assetGroup)).filter(Boolean))].sort();
   const ownerships=[...new Set([...assets.map(a=>safeText(a.ownership)),...warehouse.map(w=>safeText(w.ownership))].filter(Boolean))].sort();
-  const companyOrigins = ownerships.filter(o=>["TMC","THAI MINH"].includes(normalizeText(o).replace(/Á/g,"A")));
-  const isCompanyOrigin = o => ["TMC","THAI MINH"].includes(normalizeText(o).normalize("NFD").replace(/[\u0300-\u036f]/g, ""));
-  const originsForClass = ownerships.filter(o=>!f.originClass||(f.originClass==="company"?isCompanyOrigin(o):!isCompanyOrigin(o)));
+  const companyOrigins = ["TMC","Thái Minh"];
+  const isCompanyOrigin = o => ["tmc","thai minh"].includes(normalizeText(o).trim());
+  const originsForClass = f.originClass==="company" ? companyOrigins : f.originClass==="rental" ? ownerships.filter(o=>!isCompanyOrigin(o)) : [];
   const matrix=new Map();
   warehouse.forEach(w=>{if(!w?.projectId)return;const rowAsset=ledgerAssetForRow(w,assets);const code=normalizeText(w.itemCode||rowAsset?.code||"");if(!code)return;const key=`${code}¦${normalizeText(w.ownership||"TMC")}¦${w.projectId}`,qty=safeNumber(w.quantity),old=matrix.get(key)||{inQty:0,outQty:0,quantity:0};if(w.type==="nhap")old.inQty+=qty;else old.outQty+=qty;old.quantity=old.inQty-old.outQty;matrix.set(key,old)});
   const originVariants=useMemo(()=>{const m=new Map();assets.forEach(a=>{const o=safeText(a.ownership,"TMC");m.set(`${normalizeText(a.code||"")}¦${normalizeText(o)}`,{asset:a,ownership:o})});warehouse.forEach(w=>{const a=ledgerAssetForRow(w,assets);if(!a)return;const o=safeText(w.ownership,"TMC");m.set(`${normalizeText(a.code||"")}¦${normalizeText(o)}`,{asset:a,ownership:o})});return[...m.values()]},[assets,warehouse]);
