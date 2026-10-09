@@ -12,7 +12,7 @@ import {
   PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
-const CORE_VERSION = "v51.0.0-affected-ledger-only-validation";
+const CORE_VERSION = "v52.0.0-strict-transfer-bundle-validation";
 const WAREHOUSE_DRAFTS_KEY = "myhl_warehouse_drafts_v26";
 const loadWarehouseDrafts = () => { try { const x=JSON.parse(localStorage.getItem(WAREHOUSE_DRAFTS_KEY)||"[]"); return Array.isArray(x)?x:[]; } catch { return []; } };
 const saveWarehouseDrafts = (rows) => { try { localStorage.setItem(WAREHOUSE_DRAFTS_KEY, JSON.stringify(rows)); window.dispatchEvent(new CustomEvent("myhl:drafts-changed")); } catch {} };
@@ -1220,6 +1220,11 @@ export default function AssetManagementApp() {
     const items = Array.isArray(form.items) ? form.items.filter(x=>x.assetId && Number(x.quantity)>0) : [form];
     if (!items.length) { notify("Phiếu chưa có tài sản"); return false; }
     const editIds = new Set(Array.isArray(editMeta?.rowIds) ? editMeta.rowIds : []);
+    // Never permit the edit bundle to remove rows belonging to another voucher.
+    const editVoucherNo=String(editMeta?.oldVoucherNo||"");
+    if(editIds.size && (data.warehouse||[]).some(w=>editIds.has(w.id)&&String(w.voucherNo||"")!==editVoucherNo)){
+      notify("Không thể sửa: nhóm chứng từ chứa dòng thuộc số phiếu khác. Vui lòng mở lại đúng phiếu.");return false;
+    }
     const originalRows = Array.isArray(data.warehouse) ? data.warehouse : [];
     const currentRows = editIds.size ? originalRows.filter(w => !editIds.has(w.id)) : originalRows;
     const locationName = data.projects.find(p=>p.id===form.projectId)?.name || "";
@@ -1306,6 +1311,13 @@ export default function AssetManagementApp() {
     };
     const removedRows=originalRows.filter(w=>editIds.has(w.id));
     const affectedKeys=new Set([...removedRows,...allRows].map(ledgerDimension));
+    // Do not treat unrelated dimensions as modified when old and new events match.
+    const eventSignature=w=>`${ledgerDimension(w)}¦${String(w.date||"").slice(0,10)}¦${w.type}¦${Number(w.quantity)||0}`;
+    const oldEvents=new Map(),newEvents=new Map();
+    for(const w of removedRows){const k=eventSignature(w);oldEvents.set(k,(oldEvents.get(k)||0)+1)}
+    for(const w of allRows){const k=eventSignature(w);newEvents.set(k,(newEvents.get(k)||0)+1)}
+    const unchangedEvents=[...new Set([...oldEvents.keys(),...newEvents.keys()])].every(k=>(oldEvents.get(k)||0)===(newEvents.get(k)||0));
+    if(unchangedEvents)affectedKeys.clear();
     const baselineMinima=ledgerSnapshot(originalRows.filter(w=>affectedKeys.has(ledgerDimension(w))));
     const proposedMinima=ledgerSnapshot([...currentRows,...allRows].filter(w=>affectedKeys.has(ledgerDimension(w))));
     for(const [key,next] of proposedMinima){
@@ -1373,7 +1385,9 @@ export default function AssetManagementApp() {
 
     let related;
     if (isTransfer && row.transferId) {
-      related = all.filter(w => w.transferId && w.transferId === row.transferId);
+      // v52: transferId alone is NOT a unique voucher boundary in legacy data.
+      // Restrict by voucher number to avoid silently replacing unrelated vouchers.
+      related = all.filter(w => w.transferId && w.transferId === row.transferId && String(w.voucherNo||"") === String(row.voucherNo||""));
     } else {
       const rowLoc = row.locationName || row.warehouseName || (row.projectId ? projectName(row.projectId) : "Kho trung tâm");
       related = all.filter(w =>
