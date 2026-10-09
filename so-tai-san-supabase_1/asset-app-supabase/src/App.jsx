@@ -12,7 +12,7 @@ import {
   PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
-const CORE_VERSION = "v52.0.0-strict-transfer-bundle-validation";
+const CORE_VERSION = "v53.0.0-strict-transfer-bundle-validation";
 const WAREHOUSE_DRAFTS_KEY = "myhl_warehouse_drafts_v26";
 const loadWarehouseDrafts = () => { try { const x=JSON.parse(localStorage.getItem(WAREHOUSE_DRAFTS_KEY)||"[]"); return Array.isArray(x)?x:[]; } catch { return []; } };
 const saveWarehouseDrafts = (rows) => { try { localStorage.setItem(WAREHOUSE_DRAFTS_KEY, JSON.stringify(rows)); window.dispatchEvent(new CustomEvent("myhl:drafts-changed")); } catch {} };
@@ -1222,11 +1222,14 @@ export default function AssetManagementApp() {
     const editIds = new Set(Array.isArray(editMeta?.rowIds) ? editMeta.rowIds : []);
     // Never permit the edit bundle to remove rows belonging to another voucher.
     const editVoucherNo=String(editMeta?.oldVoucherNo||"");
-    if(editIds.size && (data.warehouse||[]).some(w=>editIds.has(w.id)&&String(w.voucherNo||"")!==editVoucherNo)){
-      notify("Không thể sửa: nhóm chứng từ chứa dòng thuộc số phiếu khác. Vui lòng mở lại đúng phiếu.");return false;
-    }
+    // v53: Legacy rows can share IDs across different vouchers. Scope edits by BOTH ID and voucher.
+    // A duplicate ID on an unrelated voucher must never be deleted or block the current edit.
     const originalRows = Array.isArray(data.warehouse) ? data.warehouse : [];
-    const currentRows = editIds.size ? originalRows.filter(w => !editIds.has(w.id)) : originalRows;
+    const isEditedRow = w => editIds.size > 0 && editIds.has(w.id) && String(w.voucherNo||"") === editVoucherNo;
+    const currentRows = editIds.size ? originalRows.filter(w => !isEditedRow(w)) : originalRows;
+    if(editIds.size && !originalRows.some(isEditedRow)){
+      notify("Không tìm thấy dòng gốc của phiếu cần sửa. Dữ liệu chưa thay đổi.");return false;
+    }
     const locationName = data.projects.find(p=>p.id===form.projectId)?.name || "";
     if (!form.projectId || !locationName) { notify("Vui lòng chọn Công trình/Kho"); return false; }
     const operationType = form.operationType || (form.type === "nhap" ? "mua_moi" : "su_dung_cong_trinh");
@@ -1309,7 +1312,7 @@ export default function AssetManagementApp() {
       const code=ledgerCodeForRow(w,data.assets||[])||normalizeText(w.itemCode||"")||String(w.assetId||"");
       return `${code}¦${normalizeText(w.ownership||"TMC")}¦${loc}`;
     };
-    const removedRows=originalRows.filter(w=>editIds.has(w.id));
+    const removedRows=originalRows.filter(isEditedRow);
     const affectedKeys=new Set([...removedRows,...allRows].map(ledgerDimension));
     // Do not treat unrelated dimensions as modified when old and new events match.
     const eventSignature=w=>`${ledgerDimension(w)}¦${String(w.date||"").slice(0,10)}¦${w.type}¦${Number(w.quantity)||0}`;
@@ -1332,7 +1335,7 @@ export default function AssetManagementApp() {
     const txs=allRows.map(r=>({id:uid("tx"),assetId:r.assetId,type:r.operationType?.startsWith("luan_chuyen")?"luan_chuyen":(r.type==="nhap"?"nhap_kho":"xuat_kho"),date:r.date,title:`${r.operationLabel} ${voucherNo}`,detail:`${r.itemName} · ${r.locationName}${r.counterpartyLocation?` ↔ ${r.counterpartyLocation}`:""} · ${r.description||""}`,amount:r.total}));
     let nextAssets=data.assets, nextRepairs=data.repairs;
     const oldVoucherNo=String(editMeta?.oldVoucherNo||"");
-    const oldAssetIds=new Set((Array.isArray(editMeta?.rowIds)?originalRows.filter(w=>editIds.has(w.id)):[]).map(w=>w.assetId));
+    const oldAssetIds=new Set((Array.isArray(editMeta?.rowIds)?originalRows.filter(isEditedRow):[]).map(w=>w.assetId));
     const baseTransactions=editIds.size
       ? data.transactions.filter(t=>!(oldAssetIds.has(t.assetId) && (!oldVoucherNo || String(t.title||"").includes(oldVoucherNo))))
       : data.transactions;
