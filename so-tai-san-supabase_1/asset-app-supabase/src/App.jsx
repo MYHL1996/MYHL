@@ -12,7 +12,7 @@ import {
   PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
-const CORE_VERSION = "v50.0.0-scoped-stock-validation";
+const CORE_VERSION = "v51.0.0-affected-ledger-only-validation";
 const WAREHOUSE_DRAFTS_KEY = "myhl_warehouse_drafts_v26";
 const loadWarehouseDrafts = () => { try { const x=JSON.parse(localStorage.getItem(WAREHOUSE_DRAFTS_KEY)||"[]"); return Array.isArray(x)?x:[]; } catch { return []; } };
 const saveWarehouseDrafts = (rows) => { try { localStorage.setItem(WAREHOUSE_DRAFTS_KEY, JSON.stringify(rows)); window.dispatchEvent(new CustomEvent("myhl:drafts-changed")); } catch {} };
@@ -1296,9 +1296,20 @@ export default function AssetManagementApp() {
       }
       return minima;
     };
-    const baselineMinima=ledgerSnapshot(originalRows);
-    const proposedMinima=ledgerSnapshot([...currentRows,...allRows]);
+    // v51: A change to one voucher cannot be the cause of deficits in an unrelated
+    // item/origin/location. Validate only ledger dimensions touched by removed or
+    // inserted voucher rows; preserve the global ledger unchanged.
+    const ledgerDimension=(w)=>{
+      const loc=w.locationName||(w.projectId?projectName(w.projectId):w.warehouseName||"Kho trung tâm");
+      const code=ledgerCodeForRow(w,data.assets||[])||normalizeText(w.itemCode||"")||String(w.assetId||"");
+      return `${code}¦${normalizeText(w.ownership||"TMC")}¦${loc}`;
+    };
+    const removedRows=originalRows.filter(w=>editIds.has(w.id));
+    const affectedKeys=new Set([...removedRows,...allRows].map(ledgerDimension));
+    const baselineMinima=ledgerSnapshot(originalRows.filter(w=>affectedKeys.has(ledgerDimension(w))));
+    const proposedMinima=ledgerSnapshot([...currentRows,...allRows].filter(w=>affectedKeys.has(ledgerDimension(w))));
     for(const [key,next] of proposedMinima){
+      if(!affectedKeys.has(key))continue;
       const previous=baselineMinima.get(key)?.min??0;
       if(next.min < -0.0000001 && next.min < previous-0.0000001){
         notify(`Không thể lưu sửa: ${next.code} tại ${next.loc} phát sinh hoặc tăng âm tồn sau phiếu ${next.row.voucherNo||""}. Tồn thấp nhất trước sửa: ${previous}; sau sửa: ${next.min}.`);
