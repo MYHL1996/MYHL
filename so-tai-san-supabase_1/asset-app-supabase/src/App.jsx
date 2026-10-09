@@ -12,7 +12,7 @@ import {
   PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
-const CORE_VERSION = "v49.0.0-origin-ledger-dimension-fix";
+const CORE_VERSION = "v50.0.0-scoped-stock-validation";
 const WAREHOUSE_DRAFTS_KEY = "myhl_warehouse_drafts_v26";
 const loadWarehouseDrafts = () => { try { const x=JSON.parse(localStorage.getItem(WAREHOUSE_DRAFTS_KEY)||"[]"); return Array.isArray(x)?x:[]; } catch { return []; } };
 const saveWarehouseDrafts = (rows) => { try { localStorage.setItem(WAREHOUSE_DRAFTS_KEY, JSON.stringify(rows)); window.dispatchEvent(new CustomEvent("myhl:drafts-changed")); } catch {} };
@@ -1273,25 +1273,35 @@ export default function AssetManagementApp() {
 
     const allRows=[...rows,...pairedRows];
 
-    // Sau khi sửa một phiếu cũ, phải kiểm tra TOÀN BỘ dòng phát sinh về sau.
-    // Nếu việc sửa làm một mã tại một kho/công trình bị âm tồn ở bất kỳ thời điểm nào thì không cho lưu.
-    const proposedWarehouse=[...allRows,...currentRows];
-    const stockLedger={};
-    const sortedForValidation=[...proposedWarehouse].sort((a,b)=>{
-      const da=String(a.date||""), db=String(b.date||"");
-      if(da!==db) return da.localeCompare(db);
-      const ta=a.type==="nhap"?0:1, tb=b.type==="nhap"?0:1;
-      if(ta!==tb) return ta-tb;
-      return String(a.id||"").localeCompare(String(b.id||""));
-    });
-    for(const w of sortedForValidation){
-      const loc=w.locationName||(w.projectId?projectName(w.projectId):w.warehouseName||"Kho trung tâm");
-      const key=`${w.assetId}¦${safeText(w.ownership,"TMC")}¦${loc}`;
-      const q=Math.max(0,Number(w.quantity)||0);
-      stockLedger[key]=(stockLedger[key]||0)+(w.type==="nhap"?q:-q);
-      if(stockLedger[key] < -0.0000001){
-        const a=assetsById[w.assetId];
-        notify(`Không thể lưu sửa: ${a?.code||w.itemCode||"Tài sản"} tại ${loc} sẽ âm tồn sau phiếu ${w.voucherNo||""}.`);
+    // v50: Chỉ chặn âm tồn mới do phiếu này gây ra. Không để lỗi lịch sử
+    // của mã/kho khác ngăn người dùng sửa một chứng từ không liên quan.
+    const ledgerSnapshot=(entries)=>{
+      const balances=new Map(), minima=new Map();
+      const sorted=[...entries].filter(Boolean).sort((a,b)=>{
+        const da=String(a.date||""),db=String(b.date||"");
+        if(da!==db)return da.localeCompare(db);
+        const ta=a.type==="nhap"?0:1,tb=b.type==="nhap"?0:1;
+        if(ta!==tb)return ta-tb;
+        return String(a.id||"").localeCompare(String(b.id||""));
+      });
+      for(const w of sorted){
+        const loc=w.locationName||(w.projectId?projectName(w.projectId):w.warehouseName||"Kho trung tâm");
+        const code=ledgerCodeForRow(w,data.assets||[])||normalizeText(w.itemCode||"")||String(w.assetId||"");
+        const key=`${code}¦${normalizeText(w.ownership||"TMC")}¦${loc}`;
+        const q=Math.max(0,Number(w.quantity)||0);
+        const balance=(balances.get(key)||0)+(w.type==="nhap"?q:-q);
+        balances.set(key,balance);
+        const previous=minima.get(key);
+        if(!previous||balance<previous.min)minima.set(key,{min:balance,row:w,loc,code});
+      }
+      return minima;
+    };
+    const baselineMinima=ledgerSnapshot(originalRows);
+    const proposedMinima=ledgerSnapshot([...currentRows,...allRows]);
+    for(const [key,next] of proposedMinima){
+      const previous=baselineMinima.get(key)?.min??0;
+      if(next.min < -0.0000001 && next.min < previous-0.0000001){
+        notify(`Không thể lưu sửa: ${next.code} tại ${next.loc} phát sinh hoặc tăng âm tồn sau phiếu ${next.row.voucherNo||""}. Tồn thấp nhất trước sửa: ${previous}; sau sửa: ${next.min}.`);
         return false;
       }
     }
