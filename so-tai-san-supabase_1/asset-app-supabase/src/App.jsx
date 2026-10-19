@@ -2821,6 +2821,15 @@ function WarehouseHub({ warehouse = [], assets = [], projects = [], settings = {
   const locations=[...new Set(safeWarehouse.map(w=>getLocation(w)).filter(Boolean))];
   const supplierNames=[...new Set([...safeSuppliers.map(s=>safeText(s.name)),...safeWarehouse.map(w=>safeText(w.supplier)),...safeWarehouse.map(w=>safeText(w.repairVendor))].filter(Boolean))];
   const operationOptions=[...(WAREHOUSE_OPERATIONS.nhap||[]),...(WAREHOUSE_OPERATIONS.xuat||[])];
+  // v58: When the phrase matches a material code/name, filter strictly by the
+  // individual transaction line. Do not allow shared voucher descriptions to
+  // pull unrelated material lines into search results.
+  const normalizedWarehouseQuery=normalizeText(query||"").trim();
+  const itemMatchesQuery=(w)=>{
+    const a=assetMap[safeText(w.assetId)]||{};
+    return normalizeText(`${safeText(w.itemCode||a.code)} ${safeText(w.itemName||a.name)}`).includes(normalizedWarehouseQuery);
+  };
+  const isMaterialSearch=!!normalizedWarehouseQuery && safeWarehouse.some(itemMatchesQuery);
   const matchesCommon=(w)=>{
     if(!w) return false;
     const a=assetMap[safeText(w.assetId)]||{};
@@ -2831,7 +2840,7 @@ function WarehouseHub({ warehouse = [], assets = [], projects = [], settings = {
     if(filter.locationName && getLocation(w)!==filter.locationName)return false;
     if(filter.supplier && safeText(w.supplier)!==filter.supplier && safeText(w.repairVendor)!==filter.supplier)return false;
     if(filter.operationType && safeText(w.operationType)!==filter.operationType)return false;
-    if(query && !normalizeText(`${safeText(w.voucherNo)} ${safeText(w.itemName||a.name)} ${safeText(w.itemCode||a.code)} ${safeText(w.supplier)} ${safeText(w.receiver)} ${safeText(w.operationLabel||OPERATION_LABELS[w.operationType])} ${safeText(w.description||w.note)}`).includes(normalizeText(query))) return false;
+    if(normalizedWarehouseQuery && !(isMaterialSearch ? itemMatchesQuery(w) : normalizeText(`${safeText(w.voucherNo)} ${safeText(w.itemName||a.name)} ${safeText(w.itemCode||a.code)} ${safeText(w.supplier)} ${safeText(w.receiver)} ${safeText(w.operationLabel||OPERATION_LABELS[w.operationType])} ${safeText(w.description||w.note)}`).includes(normalizedWarehouseQuery))) return false;
     return true;
   };
   const filteredTx=safeWarehouse.filter(matchesCommon);
