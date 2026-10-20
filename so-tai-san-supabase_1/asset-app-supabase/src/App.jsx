@@ -12,7 +12,7 @@ import {
   PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
-const CORE_VERSION = "v62.0.0-overview-dashboard";
+const CORE_VERSION = "v66.0.0-bulk-group-sticky-filter";
 const WAREHOUSE_DRAFTS_KEY = "myhl_warehouse_drafts_v26";
 const loadWarehouseDrafts = () => { try { const x=JSON.parse(localStorage.getItem(WAREHOUSE_DRAFTS_KEY)||"[]"); return Array.isArray(x)?x:[]; } catch { return []; } };
 const saveWarehouseDrafts = (rows) => { try { localStorage.setItem(WAREHOUSE_DRAFTS_KEY, JSON.stringify(rows)); window.dispatchEvent(new CustomEvent("myhl:drafts-changed")); } catch {} };
@@ -1120,22 +1120,24 @@ export default function AssetManagementApp() {
     notify("Đã lưu thay đổi");
   };
 
-  // v65: sửa hàng loạt CHỈ trường phân loại trong danh mục; không ghi lại chứng từ kho.
-  const bulkEditAssetCategory = (ids, category) => {
+  // v66: cập nhật độc lập loại tài sản và/hoặc nhóm tài sản cho toàn bộ mã được chọn.
+  const bulkEditAssetCategory = (ids, changes) => {
     if (!requireAdmin()) return false;
     const uniqueIds = [...new Set(ids)];
-    const target = String(category || "").trim();
-    if (!uniqueIds.length || !target) { notify("Chọn mã tài sản và danh mục cần đổi"); return false; }
+    const category = String(changes?.category || "").trim();
+    const assetGroup = String(changes?.assetGroup || "").trim();
+    if (!uniqueIds.length || (!category && !assetGroup)) { notify("Chọn loại tài sản hoặc nhóm tài sản cần đổi"); return false; }
     const idSet = new Set(uniqueIds);
     const actual = data.assets.filter(a => idSet.has(a.id));
     if (actual.length !== uniqueIds.length) { notify("Danh sách chọn đã thay đổi. Vui lòng chọn lại."); return false; }
-    if (!window.confirm(`Đổi danh mục của ${actual.length} mã sang “${target}”?\n\nChỉ sửa trường Danh mục trong bảng map, không thay đổi phiếu kho, số lượng tồn hay nguồn gốc.`)) return false;
+    const summary = [category && `Loại: ${category}`, assetGroup && `Nhóm: ${assetGroup}`].filter(Boolean).join("; ");
+    if (!window.confirm(`Cập nhật ${actual.length} mã tài sản?\n${summary}\n\nGiữ nguyên nguồn gốc, số lượng và chứng từ kho.`)) return false;
     setData({
       ...data,
-      assets: data.assets.map(a => idSet.has(a.id) ? { ...a, category: target } : a),
-      activityLog: logAction(data.activityLog || [], `Sửa nhanh danh mục ${actual.length} mã → ${target}`, { kind:"asset_bulk_category", assetIds:uniqueIds, newCategory:target }),
+      assets: data.assets.map(a => idSet.has(a.id) ? { ...a, ...(category ? {category} : {}), ...(assetGroup ? {assetGroup} : {}) } : a),
+      activityLog: logAction(data.activityLog || [], `Sửa nhanh ${actual.length} mã: ${summary}`, {kind:"asset_bulk_classification",assetIds:uniqueIds,category,assetGroup}),
     });
-    notify(`Đã cập nhật danh mục ${actual.length} mã tài sản`);
+    notify(`Đã cập nhật ${actual.length} mã tài sản`);
     return true;
   };
 
@@ -2374,6 +2376,7 @@ function ExportBar({ onExcel, onPdf }) {
 function AssetCatalog({ assets, warehouse = [], projectName, onSelect, selectedAssetId, onAdd, onDelete, onDeleteMany, onBulkCategory, isAdmin, customColumns = [], onExportExcel, onExportPdf, onImportExcel }) {
   const [selected,setSelected]=useState([]);
   const [bulkCategory,setBulkCategory]=useState("");
+  const [bulkGroup,setBulkGroup]=useState("");
   const [showBulkCategory,setShowBulkCategory]=useState(false);
   const [catalogFilter,setCatalogFilter]=useState({q:"",ownership:"",location:""});
   const fileRef=useRef(null);
@@ -2405,15 +2408,21 @@ function AssetCatalog({ assets, warehouse = [], projectName, onSelect, selectedA
       <div className="flex items-center gap-2 flex-wrap justify-end"><ExportBar onExcel={() => onExportExcel("danh-muc-tai-san-map-tong", headers, buildRows())} onPdf={() => onExportPdf("Danh mục tài sản — Bảng map tổng", headers, buildRows())} /><Btn icon={Download} onClick={downloadTemplate}>Tải mẫu</Btn>{isAdmin&&<><input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)onImportExcel?.(f);e.target.value=""}}/><Btn kind="info" icon={UploadCloud} onClick={()=>fileRef.current?.click()}>Đổ Excel</Btn></>}{isAdmin&&selected.length>0&&<Btn kind="info" icon={Pencil} onClick={()=>setShowBulkCategory(true)}>Sửa nhanh {selected.length} mã</Btn>}{isAdmin&&selected.length>0&&<Btn kind="danger" icon={Trash2} onClick={()=>{onDeleteMany(selected);setSelected([])}}>Xóa {selected.length} mã</Btn>}<Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm mã mới</Btn></div>
     </div>
     {showBulkCategory && <div className="rounded-lg p-3 mb-3 flex flex-wrap items-end gap-3" style={{background:TOKENS.infoSoft,border:`1px solid ${TOKENS.info}55`}}>
-      <div className="flex-1 min-w-[240px]"><div className="text-[13px] font-semibold mb-1">Sửa nhanh danh mục cho {selected.length} mã đã tích chọn</div><div className="text-[11px] mb-2">Chỉ cập nhật Danh mục/Loại tài sản; giữ nguyên nhóm, nguồn gốc, số lượng và chứng từ.</div>
-      <select aria-label="Danh mục áp dụng hàng loạt" className={inputCls} style={inputStyle} value={bulkCategory} onChange={e=>setBulkCategory(e.target.value)}><option value="">Chọn danh mục mới...</option>{[...new Set(assets.map(a=>a.category).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"vi")).map(c=><option key={c} value={c}>{c}</option>)}</select></div>
-      <Btn kind="primary" disabled={!bulkCategory||!selected.length} onClick={()=>{if(onBulkCategory?.(selected,bulkCategory)){setSelected([]);setBulkCategory("");setShowBulkCategory(false)}}}>Áp dụng cho {selected.length} mã</Btn>
+      <div className="flex-1 min-w-[260px]">
+        <div className="text-[13px] font-semibold mb-1">Sửa nhanh phân loại cho {selected.length} mã đã tích chọn</div>
+        <div className="text-[11px] mb-2">Có thể sửa Loại tài sản, Nhóm tài sản hoặc cả hai. Để trống trường nào thì giữ nguyên trường đó.</div>
+        <div className="flex flex-wrap gap-2">
+          <select aria-label="Loại tài sản áp dụng hàng loạt" className={inputCls} style={{...inputStyle,minWidth:230,flex:1}} value={bulkCategory} onChange={e=>setBulkCategory(e.target.value)}><option value="">Giữ nguyên loại tài sản</option>{[...new Set(assets.map(a=>a.category).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"vi")).map(c=><option key={c} value={c}>{c}</option>)}</select>
+          <select aria-label="Nhóm tài sản áp dụng hàng loạt" className={inputCls} style={{...inputStyle,minWidth:260,flex:1}} value={bulkGroup} onChange={e=>setBulkGroup(e.target.value)}><option value="">Giữ nguyên nhóm tài sản</option>{[...new Set(assets.map(a=>a.assetGroup).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"vi")).map(g=><option key={g} value={g}>{g}</option>)}</select>
+        </div>
+      </div>
+      <Btn kind="primary" disabled={(!bulkCategory&&!bulkGroup)||!selected.length} onClick={()=>{if(onBulkCategory?.(selected,{category:bulkCategory,assetGroup:bulkGroup})){setSelected([]);setBulkCategory("");setBulkGroup("");setShowBulkCategory(false)}}}>Áp dụng cho {selected.length} mã</Btn>
       <Btn onClick={()=>setShowBulkCategory(false)}>Hủy</Btn>
     </div>}
     <div className="rounded-lg mb-3 px-3 py-2 text-[11.5px]" style={{background:TOKENS.infoSoft,color:TOKENS.info,border:`1px solid ${TOKENS.info}22`}}>
       <b>Nguyên tắc:</b> Danh mục không làm tăng/giảm tồn. Tổng nhập, tổng xuất, tồn, giá nhập TB và giá trị tồn bên dưới được tính từ phiếu Nhập/Xuất/Chuyển kho thực tế.
     </div>
-    <div className="rounded-lg mb-3 p-3 flex flex-wrap gap-2 items-center" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}><select className={inputCls} style={{...inputStyle,width:210}} value={catalogFilter.ownership} onChange={e=>setCatalogFilter(x=>({...x,ownership:e.target.value}))}><option value="">Tất cả nguồn gốc</option>{catalogOwnerships.map(x=><option key={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:250}} value={catalogFilter.location} onChange={e=>setCatalogFilter(x=>({...x,location:e.target.value}))}><option value="">Tất cả công trình / kho</option>{catalogLocations.map(x=><option key={x}>{x}</option>)}</select><input className={inputCls} style={{...inputStyle,width:300}} value={catalogFilter.q} onChange={e=>setCatalogFilter(x=>({...x,q:e.target.value}))} placeholder="Tìm mã / tên / nhóm / nguồn..."/><Btn small onClick={()=>setCatalogFilter({q:"",ownership:"",location:""})}>Xóa lọc</Btn><span className="text-[11px]" style={{color:TOKENS.muted}}>Hiển thị {visibleAssets.length}/{catalogVariants.length} dòng mã + nguồn. Cùng mã hàng được tách theo nguồn gốc thực tế của chứng từ.</span></div>
+    <div className="rounded-lg mb-3 p-3 flex flex-wrap gap-2 items-center" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`,position:"sticky",top:0,zIndex:25,boxShadow:"0 3px 12px rgba(15,23,42,.10)"}}><select className={inputCls} style={{...inputStyle,width:210}} value={catalogFilter.ownership} onChange={e=>setCatalogFilter(x=>({...x,ownership:e.target.value}))}><option value="">Tất cả nguồn gốc</option>{catalogOwnerships.map(x=><option key={x}>{x}</option>)}</select><select className={inputCls} style={{...inputStyle,width:250}} value={catalogFilter.location} onChange={e=>setCatalogFilter(x=>({...x,location:e.target.value}))}><option value="">Tất cả công trình / kho</option>{catalogLocations.map(x=><option key={x}>{x}</option>)}</select><input className={inputCls} style={{...inputStyle,width:300}} value={catalogFilter.q} onChange={e=>setCatalogFilter(x=>({...x,q:e.target.value}))} placeholder="Tìm mã / tên / nhóm / nguồn..."/><Btn small onClick={()=>setCatalogFilter({q:"",ownership:"",location:""})}>Xóa lọc</Btn><span className="text-[11px]" style={{color:TOKENS.muted}}>Hiển thị {visibleAssets.length}/{catalogVariants.length} dòng mã + nguồn. Cùng mã hàng được tách theo nguồn gốc thực tế của chứng từ.</span></div>
     <div className="rounded-lg overflow-x-auto aa-scroll" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
       <table className="w-full min-w-[1650px]"><thead><tr><Th><input type="checkbox" checked={allSelected} onChange={toggleAll}/></Th><Th>Mã quản lý</Th><Th>Tên tài sản</Th><Th>ĐVT</Th><Th>Loại</Th><Th>Nhóm tài sản</Th><Th>Nguồn</Th><Th right>Tổng nhập</Th><Th right>Tổng xuất</Th><Th right>Tổng tồn</Th><Th right>Giá nhập TB</Th><Th right>Giá trị tồn</Th><Th right>Kho/CT có tồn</Th>{customColumns.map((c) => <Th key={c.key}>{c.label}</Th>)}</tr></thead>
       <tbody>{visibleAssets.map(a=>{const origin=safeText(a._displayOwnership,a.ownership||"TMC"),m=summaryByKey[a._catalogKey]||summarizeAssetWarehouseCanonical(a,warehouse,assets,origin);const locTitle=m.locations.filter(x=>x.quantity>0).map(x=>`${x.name}: ${Number(x.quantity).toLocaleString("vi-VN")} ${a.unit||""}`).join(" | ");return <tr key={a._catalogKey} className="aa-row cursor-pointer" onClick={()=>onSelect(a.id)} style={{background:selectedAssetId===a.id?TOKENS.brandSoft:"transparent"}}><Td><input type="checkbox" checked={selected.includes(a.id)} onClick={e=>e.stopPropagation()} onChange={e=>setSelected(e.target.checked?[...selected,a.id]:selected.filter(id=>id!==a.id))}/></Td><Td mono><Tag>{a.code}</Tag></Td><Td>{a.name}</Td><Td>{a.unit||"Cái"}</Td><Td>{a.category}</Td><Td>{a.assetGroup||"—"}</Td><Td>{origin}</Td><Td right mono>{Number(m.totalIn).toLocaleString("vi-VN")}</Td><Td right mono>{Number(m.totalOut).toLocaleString("vi-VN")}</Td><Td right mono><b>{Number(m.stock).toLocaleString("vi-VN")}</b></Td><Td right mono>{fmtVND(Math.round(m.avgInPrice))}</Td><Td right mono>{fmtVND(Math.round(m.stockValue))}</Td><Td right><span title={locTitle||"Chưa có tồn"}>{m.locationCount||0}</span></Td>{customColumns.map(c=><Td key={c.key} mono={c.type!=="text"}>{c.type==="date"?fmtDate(a.customFields?.[c.key]):(a.customFields?.[c.key]||"—")}</Td>)}</tr>})}</tbody></table>{visibleAssets.length === 0 && <EmptyState text="Không tìm thấy mã tài sản phù hợp" sub="Import hoặc thêm mã mới vào bảng map." />}
