@@ -1120,6 +1120,25 @@ export default function AssetManagementApp() {
     notify("Đã lưu thay đổi");
   };
 
+  // v65: sửa hàng loạt CHỈ trường phân loại trong danh mục; không ghi lại chứng từ kho.
+  const bulkEditAssetCategory = (ids, category) => {
+    if (!requireAdmin()) return false;
+    const uniqueIds = [...new Set(ids)];
+    const target = String(category || "").trim();
+    if (!uniqueIds.length || !target) { notify("Chọn mã tài sản và danh mục cần đổi"); return false; }
+    const idSet = new Set(uniqueIds);
+    const actual = data.assets.filter(a => idSet.has(a.id));
+    if (actual.length !== uniqueIds.length) { notify("Danh sách chọn đã thay đổi. Vui lòng chọn lại."); return false; }
+    if (!window.confirm(`Đổi danh mục của ${actual.length} mã sang “${target}”?\n\nChỉ sửa trường Danh mục trong bảng map, không thay đổi phiếu kho, số lượng tồn hay nguồn gốc.`)) return false;
+    setData({
+      ...data,
+      assets: data.assets.map(a => idSet.has(a.id) ? { ...a, category: target } : a),
+      activityLog: logAction(data.activityLog || [], `Sửa nhanh danh mục ${actual.length} mã → ${target}`, { kind:"asset_bulk_category", assetIds:uniqueIds, newCategory:target }),
+    });
+    notify(`Đã cập nhật danh mục ${actual.length} mã tài sản`);
+    return true;
+  };
+
   const deleteAsset = (id) => {
     if (!requireAdmin()) return;
     const asset = assetsById[id];
@@ -1980,7 +1999,7 @@ export default function AssetManagementApp() {
                 <AssetCatalog
                   assets={filteredAssets} warehouse={data.warehouse || []} projectName={projectName} onSelect={setSelectedAssetId} selectedAssetId={selectedAssetId}
                   onAdd={() => setModal({ type: "addAsset" })} customColumns={settings.customColumns} isAdmin={isAdmin} onDelete={deleteAsset}
-                  onExportExcel={doExportExcel} onExportPdf={doExportPdf} onDeleteMany={deleteAssets} onImportExcel={(file)=>importExcel(file,"assets")}
+                  onExportExcel={doExportExcel} onExportPdf={doExportPdf} onDeleteMany={deleteAssets} onBulkCategory={bulkEditAssetCategory} onImportExcel={(file)=>importExcel(file,"assets")}
                 />
               )}
               {active === "byProject" && <ByProject data={data} projectName={projectName} onSelect={(id) => { setActive("catalog"); setSelectedAssetId(id); }} />}
@@ -2352,8 +2371,10 @@ function ExportBar({ onExcel, onPdf }) {
   );
 }
 
-function AssetCatalog({ assets, warehouse = [], projectName, onSelect, selectedAssetId, onAdd, onDelete, onDeleteMany, isAdmin, customColumns = [], onExportExcel, onExportPdf, onImportExcel }) {
+function AssetCatalog({ assets, warehouse = [], projectName, onSelect, selectedAssetId, onAdd, onDelete, onDeleteMany, onBulkCategory, isAdmin, customColumns = [], onExportExcel, onExportPdf, onImportExcel }) {
   const [selected,setSelected]=useState([]);
+  const [bulkCategory,setBulkCategory]=useState("");
+  const [showBulkCategory,setShowBulkCategory]=useState(false);
   const [catalogFilter,setCatalogFilter]=useState({q:"",ownership:"",location:""});
   const fileRef=useRef(null);
   const catalogVariants=useMemo(()=>{
@@ -2381,8 +2402,14 @@ function AssetCatalog({ assets, warehouse = [], projectName, onSelect, selectedA
   return <div className="aa-fade">
     <div className="flex items-center justify-between mb-4 gap-3">
       <div><h1 className="aa-display text-xl font-semibold">Danh mục tài sản — Bảng map tổng</h1><div className="text-[11px] mt-1" style={{color:TOKENS.muted}}>Master data để map mã/tên/ĐVT/loại/nhóm. Import danh mục không tạo phiếu nhập; tồn và giá được tổng hợp động từ chứng từ Kho.</div></div>
-      <div className="flex items-center gap-2 flex-wrap justify-end"><ExportBar onExcel={() => onExportExcel("danh-muc-tai-san-map-tong", headers, buildRows())} onPdf={() => onExportPdf("Danh mục tài sản — Bảng map tổng", headers, buildRows())} /><Btn icon={Download} onClick={downloadTemplate}>Tải mẫu</Btn>{isAdmin&&<><input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)onImportExcel?.(f);e.target.value=""}}/><Btn kind="info" icon={UploadCloud} onClick={()=>fileRef.current?.click()}>Đổ Excel</Btn></>}{isAdmin&&selected.length>0&&<Btn kind="danger" icon={Trash2} onClick={()=>{onDeleteMany(selected);setSelected([])}}>Xóa {selected.length} mã</Btn>}<Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm mã mới</Btn></div>
+      <div className="flex items-center gap-2 flex-wrap justify-end"><ExportBar onExcel={() => onExportExcel("danh-muc-tai-san-map-tong", headers, buildRows())} onPdf={() => onExportPdf("Danh mục tài sản — Bảng map tổng", headers, buildRows())} /><Btn icon={Download} onClick={downloadTemplate}>Tải mẫu</Btn>{isAdmin&&<><input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)onImportExcel?.(f);e.target.value=""}}/><Btn kind="info" icon={UploadCloud} onClick={()=>fileRef.current?.click()}>Đổ Excel</Btn></>}{isAdmin&&selected.length>0&&<Btn kind="info" icon={Pencil} onClick={()=>setShowBulkCategory(true)}>Sửa nhanh {selected.length} mã</Btn>}{isAdmin&&selected.length>0&&<Btn kind="danger" icon={Trash2} onClick={()=>{onDeleteMany(selected);setSelected([])}}>Xóa {selected.length} mã</Btn>}<Btn kind="primary" icon={Plus} onClick={onAdd}>Thêm mã mới</Btn></div>
     </div>
+    {showBulkCategory && <div className="rounded-lg p-3 mb-3 flex flex-wrap items-end gap-3" style={{background:TOKENS.infoSoft,border:`1px solid ${TOKENS.info}55`}}>
+      <div className="flex-1 min-w-[240px]"><div className="text-[13px] font-semibold mb-1">Sửa nhanh danh mục cho {selected.length} mã đã tích chọn</div><div className="text-[11px] mb-2">Chỉ cập nhật Danh mục/Loại tài sản; giữ nguyên nhóm, nguồn gốc, số lượng và chứng từ.</div>
+      <select aria-label="Danh mục áp dụng hàng loạt" className={inputCls} style={inputStyle} value={bulkCategory} onChange={e=>setBulkCategory(e.target.value)}><option value="">Chọn danh mục mới...</option>{[...new Set(assets.map(a=>a.category).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"vi")).map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+      <Btn kind="primary" disabled={!bulkCategory||!selected.length} onClick={()=>{if(onBulkCategory?.(selected,bulkCategory)){setSelected([]);setBulkCategory("");setShowBulkCategory(false)}}}>Áp dụng cho {selected.length} mã</Btn>
+      <Btn onClick={()=>setShowBulkCategory(false)}>Hủy</Btn>
+    </div>}
     <div className="rounded-lg mb-3 px-3 py-2 text-[11.5px]" style={{background:TOKENS.infoSoft,color:TOKENS.info,border:`1px solid ${TOKENS.info}22`}}>
       <b>Nguyên tắc:</b> Danh mục không làm tăng/giảm tồn. Tổng nhập, tổng xuất, tồn, giá nhập TB và giá trị tồn bên dưới được tính từ phiếu Nhập/Xuất/Chuyển kho thực tế.
     </div>
