@@ -12,7 +12,7 @@ import {
   PackagePlus, PackageMinus, FileSpreadsheet, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 
-const CORE_VERSION = "v61.0.0-material-filter-verified";
+const CORE_VERSION = "v62.0.0-overview-dashboard";
 const WAREHOUSE_DRAFTS_KEY = "myhl_warehouse_drafts_v26";
 const loadWarehouseDrafts = () => { try { const x=JSON.parse(localStorage.getItem(WAREHOUSE_DRAFTS_KEY)||"[]"); return Array.isArray(x)?x:[]; } catch { return []; } };
 const saveWarehouseDrafts = (rows) => { try { localStorage.setItem(WAREHOUSE_DRAFTS_KEY, JSON.stringify(rows)); window.dispatchEvent(new CustomEvent("myhl:drafts-changed")); } catch {} };
@@ -2256,92 +2256,66 @@ function TopBar({ query, setQuery, data, saving, onRefresh }) {
 /* ============================== OVERVIEW ============================== */
 
 function Overview({ data, counts, projectName }) {
-  const [ovFilter,setOvFilter]=useState({category:"",group:"",ownership:"",projectId:""});
-  const ovAssets=(data.assets||[]).filter(a=>(!ovFilter.category||safeText(a.category)===ovFilter.category)&&(!ovFilter.group||safeText(a.assetGroup)===ovFilter.group)&&(!ovFilter.ownership||safeText(a.ownership)===ovFilter.ownership));
-  const ovAssetIds=new Set(ovAssets.map(a=>a.id));
-  const ovWh=(data.warehouse||[]).filter(w=>ovAssetIds.has(w.assetId)&&(!ovFilter.projectId||w.projectId===ovFilter.projectId));
-  const ovStockIds=new Set(); const ovBal={}; ovWh.forEach(w=>{const k=`${w.assetId}¦${w.projectId}`,q=safeNumber(w.quantity);ovBal[k]=(ovBal[k]||0)+(w.type==="nhap"?q:-q)});Object.entries(ovBal).forEach(([k,v])=>{if(v>1e-9)ovStockIds.add(k.split("¦")[0])});
-  const ovFiltered=!!(ovFilter.category||ovFilter.group||ovFilter.ownership||ovFilter.projectId);
-  const ovTotal=ovFiltered?ovStockIds.size:counts.total;
-  const breakdown = [
-    { label: STATUS.ASSIGNED, value: counts[STATUS.ASSIGNED] },
-    { label: STATUS.SHARED, value: counts[STATUS.SHARED] },
-    { label: STATUS.UNUSED, value: counts[STATUS.UNUSED] },
-    { label: STATUS.REPAIR, value: counts[STATUS.REPAIR] },
-    { label: STATUS.BROKEN, value: counts[STATUS.BROKEN] },
-    { label: STATUS.LIQUIDATED, value: counts[STATUS.LIQUIDATED] },
-    { label: STATUS.TRANSFERRED_OUT, value: counts[STATUS.TRANSFERRED_OUT] },
-  ];
-  const max = Math.max(1, ...breakdown.map((b) => b.value));
-
-  return (
-    <div className="aa-fade max-w-5xl">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="aa-display text-xl font-semibold">Tổng quan</h1>
-        <div className="flex items-center gap-2 rounded-full px-3 py-1" style={{ background: TOKENS.goldSoft, color: TOKENS.gold }}>
-          <Stamp size={14} />
-          <span className="aa-display text-[13px] font-semibold">{ovTotal} tài sản</span>
-        </div>
-      </div>
-
-      <div className="rounded-lg p-3 mb-4 flex flex-wrap gap-2" style={{background:TOKENS.surface,border:`1px solid ${TOKENS.border}`}}>
-        <select className={inputCls} style={{...inputStyle,width:180}} value={ovFilter.category} onChange={e=>setOvFilter(x=>({...x,category:e.target.value}))}><option value="">Tất cả loại tài sản</option>{[...new Set((data.assets||[]).map(a=>safeText(a.category)).filter(Boolean))].sort().map(x=><option key={x}>{x}</option>)}</select>
-        <select className={inputCls} style={{...inputStyle,width:190}} value={ovFilter.group} onChange={e=>setOvFilter(x=>({...x,group:e.target.value}))}><option value="">Tất cả nhóm tài sản</option>{[...new Set((data.assets||[]).map(a=>safeText(a.assetGroup)).filter(Boolean))].sort().map(x=><option key={x}>{x}</option>)}</select>
-        <select className={inputCls} style={{...inputStyle,width:170}} value={ovFilter.ownership} onChange={e=>setOvFilter(x=>({...x,ownership:e.target.value}))}><option value="">Tất cả nguồn gốc</option>{[...new Set((data.assets||[]).map(a=>safeText(a.ownership)).filter(Boolean))].sort().map(x=><option key={x}>{x}</option>)}</select>
-        <select className={inputCls} style={{...inputStyle,width:230}} value={ovFilter.projectId} onChange={e=>setOvFilter(x=>({...x,projectId:e.target.value}))}><option value="">Tất cả kho / công trình</option>{(data.projects||[]).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
-        <Btn small onClick={()=>setOvFilter({category:"",group:"",ownership:"",projectId:""})}>Xóa lọc</Btn>
-        {ovFiltered&&<div className="text-[11.5px] self-center ml-auto" style={{color:TOKENS.muted}}>Đang lọc: <b style={{color:TOKENS.brand}}>{ovTotal}</b> mã còn tồn phù hợp</div>}
-      </div>
-
-      <div className="grid grid-cols-4 gap-3 mb-3">
-        <StatCard label="Đang rảnh" value={counts[STATUS.UNUSED]} />
-        <StatCard label="Dùng chung" value={counts[STATUS.SHARED]} accent={TOKENS.info} />
-        <StatCard label="Đang sửa/bảo dưỡng" value={counts[STATUS.REPAIR]} accent={TOKENS.gold} />
-        <StatCard label="Hỏng/mất" value={counts[STATUS.BROKEN]} accent={TOKENS.danger} />
-      </div>
-      <div className="grid grid-cols-4 gap-3 mb-6">
-        <StatCard label="Đã điều chuyển" value={counts[STATUS.TRANSFERRED_OUT]} />
-        <StatCard label="Còn bảo hành" value={counts.warranty} accent={TOKENS.brand} />
-        <StatCard label="Tổng công trình" value={data.projects.length} />
-        <StatCard label="Chi phí sửa chữa 2026" value={fmtVND(counts.repairCostThisYear)} accent={TOKENS.gold} />
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div className="rounded-lg p-5" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
-          <div className="text-[13px] font-medium mb-4">Phân bổ tài sản</div>
-          <div className="space-y-2.5">
-            {breakdown.map((b) => (
-              <div key={b.label} className="flex items-center gap-3">
-                <div className="w-[150px] text-[12px] shrink-0" style={{ color: TOKENS.muted }}>{b.label}</div>
-                <div className="flex-1 h-2 rounded-full" style={{ background: TOKENS.paper }}>
-                  <div className="h-2 rounded-full" style={{ width: `${(b.value / max) * 100}%`, background: STATUS_COLOR[b.label] }} />
-                </div>
-                <div className="w-6 text-right aa-mono text-[12px]">{b.value}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="rounded-lg p-5" style={{ background: TOKENS.surface, border: `1px solid ${TOKENS.border}` }}>
-          <div className="text-[13px] font-medium mb-4">Phiếu đang xử lý</div>
-          {counts.openRepairs === 0 ? (
-            <EmptyState text="Không có phiếu sửa chữa đang mở" />
-          ) : (
-            <div className="text-[13px]" style={{ color: TOKENS.muted }}>{counts.openRepairs} phiếu sửa chữa đang chờ xử lý.</div>
-          )}
-          <div className="mt-5 text-[13px] font-medium mb-2">Gần đây</div>
-          <div className="space-y-2">
-            {data.activityLog.slice(-4).reverse().map((l) => (
-              <div key={l.id} className="text-[12px] flex items-start gap-2" style={{ color: TOKENS.muted }}>
-                <span className="aa-mono shrink-0">{fmtDate(l.date)}</span>
-                <span>{l.action}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+  const [f,setF]=useState({projectId:"",group:"",originClass:"",ownership:""});
+  const assets=data.assets||[], projects=data.projects||[];
+  const ledger=useMemo(()=>canonicalWarehouseRows((data.warehouse||[]).filter(w=>w&&!isLegacyCatalogImportStockRow(w)),assets),[data.warehouse,data.assets]);
+  const byCode=useMemo(()=>new Map(assets.filter(a=>a?.code).map(a=>[normalizeText(a.code),a])),[assets]);
+  const company=o=>["tmc","thai minh"].includes(normalizeText(o||"TMC").trim());
+  const origins=useMemo(()=>[...new Set([...assets.map(a=>safeText(a.ownership)),...ledger.map(w=>safeText(w.ownership,"TMC"))].filter(Boolean))].sort(),[assets,ledger]);
+  const choices=f.originClass==="company"?["TMC","Thái Minh"]:f.originClass==="rental"?origins.filter(o=>!company(o)):[];
+  const groups=useMemo(()=>[...new Set(assets.map(a=>safeText(a.assetGroup)).filter(Boolean))].sort(),[assets]);
+  const rows=useMemo(()=>{
+    const m=new Map();
+    ledger.forEach(w=>{
+      if(!w.projectId)return;
+      const a=byCode.get(normalizeText(w.itemCode||""))||assets.find(x=>x.id===w.assetId);
+      if(!a?.code)return;
+      const origin=safeText(w.ownership,"TMC"), key=`${normalizeText(a.code)}¦${origin}¦${w.projectId}`;
+      const old=m.get(key)||{asset:a,origin,projectId:w.projectId,qty:0};
+      old.qty+=(w.type==="nhap"?1:-1)*safeNumber(w.quantity);m.set(key,old);
+    });
+    return [...m.values()].filter(r=>r.qty>1e-9&&(!f.projectId||r.projectId===f.projectId)&&(!f.group||safeText(r.asset.assetGroup)===f.group)&&(!f.originClass||(f.originClass==="company"?company(r.origin):!company(r.origin)))&&(!f.ownership||normalizeText(r.origin)===normalizeText(f.ownership)));
+  },[ledger,byCode,assets,f]);
+  const codes=new Set(rows.map(r=>normalizeText(r.asset.code)));
+  const activeProjects=new Set(rows.map(r=>r.projectId));
+  const groupMap=new Map(),originMap=new Map();
+  rows.forEach(r=>{
+    const group=safeText(r.asset.assetGroup,"Chưa phân nhóm"),o=company(r.origin)?(normalizeText(r.origin)==="tmc"?"TMC":"Thái Minh"):"Thuê ngoài (NCC)";
+    if(!groupMap.has(group))groupMap.set(group,{name:group,codes:new Set(),qty:0});
+    const g=groupMap.get(group);g.codes.add(normalizeText(r.asset.code));g.qty+=r.qty;
+    originMap.set(o,(originMap.get(o)||0)+r.qty);
+  });
+  const groupRows=[...groupMap.values()].sort((a,b)=>b.codes.size-a.codes.size);
+  const repairRows=(data.repairs||[]).filter(r=>{const status=normalizeText(r.status||"");return !status.includes("hoan thanh")&&!status.includes("thanh ly")&&!status.includes("completed")&&!status.includes("done")});
+  const repairGroups=new Map();repairRows.forEach(r=>{const a=assets.find(x=>x.id===r.assetId),group=safeText(a?.assetGroup,"Chưa phân nhóm");if(f.group&&group!==f.group)return;if(f.projectId&&r.projectId!==f.projectId)return;const origin=safeText(r.ownership||a?.ownership,"TMC");if(f.originClass&&(f.originClass==="company"?!company(origin):company(origin)))return;if(f.ownership&&normalizeText(origin)!==normalizeText(f.ownership))return;repairGroups.set(group,(repairGroups.get(group)||0)+1)});
+  const repairTotal=[...repairGroups.values()].reduce((a,b)=>a+b,0);
+  const totalQty=rows.reduce((n,r)=>n+r.qty,0);
+  const fmt=n=>Number(n||0).toLocaleString("vi-VN",{maximumFractionDigits:2});
+  const palette=["#2878ef","#13b981","#ff971b","#9955e8","#f66d87","#7b8799"];
+  const panel={background:"#fff",border:"1px solid #e1e5ec",borderRadius:12,padding:16};
+  const bar=(value,max,color)=> <div style={{height:9,background:"#eef1f6",borderRadius:9,flex:1,overflow:"hidden"}}><div style={{width:`${Math.max(0,Math.min(100,value/Math.max(1,max)*100))}%`,height:"100%",background:color,borderRadius:9}}/></div>;
+  const ring=(parts,center,subtitle)=>{let at=0;const sum=parts.reduce((n,p)=>n+p.value,0);const stops=parts.map((p,i)=>{const start=at;at+=sum?p.value/sum*100:0;return `${palette[i%palette.length]} ${start}% ${at}%`});return <div style={{display:"flex",alignItems:"center",gap:20,flexWrap:"wrap"}}><div style={{width:156,height:156,borderRadius:"50%",background:sum?`conic-gradient(${stops.join(",")})`:"#edf0f5",display:"grid",placeItems:"center",flexShrink:0}}><div style={{width:104,height:104,borderRadius:"50%",background:"white",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}><b style={{fontSize:24}}>{fmt(center)}</b><small style={{fontSize:10,color:"#667085"}}>{subtitle}</small></div></div><div style={{flex:1,minWidth:150}}>{parts.map((p,i)=><div key={p.name} style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,fontSize:12}}><span style={{width:10,height:10,borderRadius:9,background:palette[i%palette.length]}}/><span style={{flex:1}}>{p.name}</span><b>{fmt(p.value)}</b></div>)}</div></div>};
+  return <div className="aa-fade" style={{maxWidth:1480}}>
+    <div className="flex items-center justify-between mb-4"><div><h1 className="aa-display text-2xl font-bold">Tổng quan</h1><p className="text-[12px] mt-1" style={{color:TOKENS.muted}}>Thống kê tồn kho thực tế theo công trình, danh mục và nguồn gốc.</p></div><span className="text-[11px]" style={{color:TOKENS.muted}}>Dữ liệu từ chứng từ đã lưu</span></div>
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+      <div style={panel}><div className="text-[12px] font-semibold mb-2" style={{color:"#2878ef"}}>▥ Công trình / Khu vực</div><select className={inputCls} style={{...inputStyle,width:"100%"}} value={f.projectId} onChange={e=>setF(x=>({...x,projectId:e.target.value}))}><option value="">Tất cả công trình</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+      <div style={panel}><div className="text-[12px] font-semibold mb-2" style={{color:"#10a975"}}>⬡ Danh mục / Nhóm tài sản</div><select className={inputCls} style={{...inputStyle,width:"100%"}} value={f.group} onChange={e=>setF(x=>({...x,group:e.target.value}))}><option value="">Tất cả danh mục / nhóm tài sản</option>{groups.map(g=><option key={g}>{g}</option>)}</select></div>
+      <div style={panel}><div className="text-[12px] font-semibold mb-2" style={{color:"#8a4de1"}}>◈ Nguồn gốc</div><div className="flex gap-2"><select className={inputCls} style={{...inputStyle,width:"44%"}} value={f.originClass} onChange={e=>setF(x=>({...x,originClass:e.target.value,ownership:""}))}><option value="">Tất cả nguồn gốc</option><option value="company">Nguồn gốc công ty</option><option value="rental">Thuê ngoài / nhà cung cấp</option></select><select className={inputCls} style={{...inputStyle,width:"38%"}} value={f.ownership} disabled={!f.originClass} onChange={e=>setF(x=>({...x,ownership:e.target.value}))}><option value="">{f.originClass==="company"?"Tất cả (TMC + Thái Minh)":f.originClass==="rental"?"Tất cả nhà cung cấp":"Chọn nhóm nguồn"}</option>{choices.map(o=><option key={o} value={o}>{o}</option>)}</select><Btn small onClick={()=>setF({projectId:"",group:"",originClass:"",ownership:""})}>Xóa lọc</Btn></div></div>
     </div>
-  );
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">{[
+      {label:"Công trình có tồn",value:activeProjects.size,sub:`/ ${projects.length} công trình`,color:"#2878ef"},
+      {label:"Tổng loại tài sản đang tồn",value:codes.size,sub:"Mã tài sản có tồn > 0",color:"#10b981"},
+      {label:"Nhóm tài sản có tồn",value:groupRows.length,sub:`/ ${groups.length} nhóm`,color:"#8b5cf6"},
+      {label:"Đang sửa / bảo dưỡng",value:repairTotal,sub:"Hồ sơ sửa chữa chưa hoàn thành",color:"#f28b16"}
+    ].map(x=><div key={x.label} style={{...panel,borderTop:`3px solid ${x.color}`}}><div style={{fontSize:12,color:x.color,fontWeight:650}}>{x.label}</div><div style={{fontSize:29,fontWeight:750,marginTop:6}}>{fmt(x.value)}</div><div style={{fontSize:11,color:TOKENS.muted}}>{x.sub}</div></div>)}</div>
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4">
+      <div style={panel}><h3 className="font-semibold text-[13px] mb-4">Tồn theo nguồn gốc</h3>{ring(["TMC","Thái Minh","Thuê ngoài (NCC)"].map(name=>({name,value:originMap.get(name)||0})),totalQty,"tổng số lượng tồn")}</div>
+      <div style={panel}><h3 className="font-semibold text-[13px] mb-4">Số loại tài sản theo nhóm</h3>{groupRows.length?groupRows.slice(0,6).map((g,i)=><div key={g.name} className="flex items-center gap-2 mb-3" style={{fontSize:11}}><span style={{width:135,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={g.name}>{g.name}</span>{bar(g.codes.size,groupRows[0].codes.size,palette[i%palette.length])}<b style={{width:35,textAlign:"right"}}>{g.codes.size}</b></div>):<EmptyState text="Không có tồn kho phù hợp"/>}</div>
+      <div style={panel}><h3 className="font-semibold text-[13px] mb-4">Đang sửa / bảo dưỡng theo nhóm</h3>{ring([...repairGroups].map(([name,value])=>({name,value})),repairTotal,"hồ sơ đang sửa")}</div>
+    </div>
+    <div style={panel}><h3 className="font-semibold text-[13px] mb-3">Tồn theo nhóm tài sản</h3><div style={{overflowX:"auto"}}><table className="w-full text-[12px]" style={{borderCollapse:"collapse"}}><thead><tr style={{background:"#f6f8fb",textAlign:"left"}}>{["STT","Nhóm tài sản","Số loại tài sản đang tồn","Tổng số lượng tồn","Đang sửa / bảo dưỡng","Nguồn gốc"].map(h=><th key={h} style={{padding:"10px 9px",borderBottom:"1px solid #e5e7eb"}}>{h}</th>)}</tr></thead><tbody>{groupRows.map((g,i)=>{const gr=rows.filter(r=>safeText(r.asset.assetGroup,"Chưa phân nhóm")===g.name),os=[...new Set(gr.map(r=>r.origin))];return <tr key={g.name} style={{borderBottom:"1px solid #edf0f5"}}><td style={{padding:9}}>{i+1}</td><td style={{padding:9}}>{g.name}</td><td style={{padding:9}}>{g.codes.size}</td><td style={{padding:9}}>{fmt(g.qty)}</td><td style={{padding:9}}>{repairGroups.get(g.name)||0}</td><td style={{padding:9}}>{os.join("; ")}</td></tr>})}{!groupRows.length&&<tr><td colSpan={6} style={{padding:20,textAlign:"center",color:TOKENS.muted}}>Không có vật tư tồn phù hợp với bộ lọc.</td></tr>}</tbody></table></div></div>
+    <p className="text-[11px] mt-3" style={{color:TOKENS.muted}}>Số loại tài sản tính theo mã hàng duy nhất; số lượng tồn tính từ chứng từ kho theo từng công trình và nguồn gốc. Các đơn vị tính khác nhau không được quy đổi sang cùng một đơn vị.</p>
+  </div>;
 }
 
 /* ============================== ASSET CATALOG ============================== */
