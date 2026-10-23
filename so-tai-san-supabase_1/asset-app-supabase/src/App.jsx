@@ -155,16 +155,27 @@ function reportColumnWidths(headers, rows) {
   });
 }
 
+// Chuẩn hóa số trên file xuất theo giao diện (tối đa 3 chữ số thập phân).
+function reportExportNumber(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return value;
+  return Math.round((value + Math.sign(value) * Number.EPSILON) * 1000) / 1000;
+}
+function reportExportDisplay(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return String(value ?? "");
+  return reportExportNumber(value).toLocaleString("vi-VN", { maximumFractionDigits: 3 });
+}
+
 function reportCellHtml(value, index, isHeader, widths) {
-  const raw = value == null ? "" : value;
+  const raw = value == null ? "" : reportExportNumber(value);
   const numeric = typeof raw === "number" && Number.isFinite(raw);
   const style = isHeader
     ? `width:${widths[index]}px;min-width:${widths[index]}px;background:${REPORT_THEME.brand};color:#fff;border:1px solid ${REPORT_THEME.border};padding:7px 6px;text-align:center;vertical-align:middle;font-weight:700;white-space:normal;`
-    : `width:${widths[index]}px;min-width:${widths[index]}px;border:1px solid ${REPORT_THEME.border};padding:6px 6px;vertical-align:top;white-space:normal;${numeric ? "text-align:right;mso-number-format:'#,##0.00';" : "text-align:left;"}`;
-  return `<${isHeader ? "th" : "td"} style="${style}">${escapeHtml(raw)}</${isHeader ? "th" : "td"}>`;
+    : `width:${widths[index]}px;min-width:${widths[index]}px;border:1px solid ${REPORT_THEME.border};padding:6px 6px;vertical-align:top;white-space:normal;${numeric ? "text-align:right;mso-number-format:'#,##0.###';" : "text-align:left;"}`;
+  return `<${isHeader ? "th" : "td"}${numeric ? ` x:num="${raw}"` : ""} style="${style}">${escapeHtml(raw)}</${isHeader ? "th" : "td"}>`;
 }
 
 function buildStyledExcelHtml(filename, title, headers, rows, companyName) {
+  rows = rows.map(r => r.map(reportExportNumber));
   const widths = reportColumnWidths(headers, rows);
   const colspan = Math.max(1, headers.length);
   const generatedAt = new Date().toLocaleString("vi-VN");
@@ -2345,15 +2356,15 @@ function ReportDesigner({ job, companyName, onClose, onExcel, onPrint }) {
   const toggle=(i)=>setSelected(v=>v.includes(i)?v.filter(x=>x!==i):[...v,i]);
   const move=(pos,dir)=>setSelected(v=>{const n=[...v],to=pos+dir;if(to<0||to>=n.length)return n;[n[pos],n[to]]=[n[to],n[pos]];return n});
   const chosen=selected.map(i=>job.headers[i]);
-  const rows=job.rows.map(r=>selected.map(i=>r[i]));
-  const run=()=>{if(!selected.length)return alert("Hãy chọn ít nhất 1 cột báo cáo."); const out={filename:job.filename,title:job.title,headers:chosen,rows}; job.mode==="excel"?onExcel(out):onPrint({...out,rows:rows.map(r=>r.map(c=>c==null?"":String(c)))})};
+  const rows=job.rows.map(r=>selected.map(i=>reportExportNumber(r[i])));
+  const run=()=>{if(!selected.length)return alert("Hãy chọn ít nhất 1 cột báo cáo."); const out={filename:job.filename,title:job.title,headers:chosen,rows}; job.mode==="excel"?onExcel(out):onPrint({...out,rows:rows.map(r=>r.map(c=>c==null?"":reportExportDisplay(c)))})};
   return <Modal title="Thiết kế báo cáo trước khi xuất" onClose={onClose} wide>
     <div className="mb-4 rounded-md px-3 py-2 text-[11.5px]" style={{background:TOKENS.infoSoft,color:TOKENS.info,border:`1px solid ${TOKENS.info}22`}}><b>Preview = File Excel:</b> màu tiêu đề, viền bảng, nền xen kẽ, thứ tự cột và căn số dùng chung một bộ định dạng. Báo cáo Excel tải về ở định dạng <b>.xls</b> để giữ style mà không cần thêm thư viện mới.</div>
     <div className="grid grid-cols-[1fr_1.15fr] gap-5">
       <div><div className="flex items-center justify-between mb-2"><div><div className="text-[13px] font-semibold">Cột thông tin</div><div className="text-[11px]" style={{color:TOKENS.muted}}>Chọn cột và sắp xếp thứ tự xuất.</div></div><button className="text-[11px] font-semibold" style={{color:TOKENS.brand}} onClick={()=>setSelected(job.headers.map((_,i)=>i))}>Mẫu mặc định</button></div>
         <div className="rounded-lg overflow-hidden" style={{border:`1px solid ${TOKENS.border}`}}>{job.headers.map((h,i)=>{const pos=selected.indexOf(i),on=pos>=0;return <div key={`${h}-${i}`} className="flex items-center gap-2 px-3 py-2" style={{borderBottom:`1px solid ${TOKENS.border}`,background:on?TOKENS.brandSoft:"#fff"}}><input type="checkbox" checked={on} onChange={()=>toggle(i)}/><span className="flex-1 text-[12px]">{h}</span>{on&&<><span className="text-[10px] aa-mono" style={{color:TOKENS.muted}}>#{pos+1}</span><button disabled={pos===0} onClick={()=>move(pos,-1)} className="p-1 disabled:opacity-25"><ArrowUp size={14}/></button><button disabled={pos===selected.length-1} onClick={()=>move(pos,1)} className="p-1 disabled:opacity-25"><ArrowDown size={14}/></button></>}</div>})}</div>
       </div>
-      <div><div className="flex items-center gap-2 mb-2"><SlidersHorizontal size={15}/><div className="text-[13px] font-semibold">Xem trước mẫu báo cáo</div></div><div className="rounded-lg bg-white p-4 overflow-auto max-h-[520px]" style={{border:`1px solid ${TOKENS.border}`}}><div className="text-[10px] font-extrabold uppercase" style={{color:REPORT_THEME.brand}}>{String(companyName||"MYHL").toUpperCase()}</div><div className="text-center font-extrabold text-[15px] uppercase mt-1 mb-1">{job.title}</div><div className="text-center text-[9px] mb-3" style={{color:REPORT_THEME.muted}}>Ngày xuất: {new Date().toLocaleString("vi-VN")}</div><table className="border-collapse text-[8px]" style={{tableLayout:"fixed",width:"max-content",minWidth:"100%"}}><thead><tr>{chosen.map((h,i)=><th key={i} className="p-1 text-white text-center font-bold" style={{background:REPORT_THEME.brand,border:`1px solid ${REPORT_THEME.border}`,minWidth:Math.max(72,Math.min(180,String(h||"").length*8+28))}}>{h}</th>)}</tr></thead><tbody>{rows.slice(0,6).map((r,ri)=><tr key={ri} style={{background:ri%2?REPORT_THEME.brandSoft:REPORT_THEME.paper}}>{r.map((c,ci)=><td key={ci} className="p-1 align-top" style={{border:`1px solid ${REPORT_THEME.border}`,textAlign:typeof c==="number"?"right":"left",whiteSpace:"normal"}}>{String(c??"")}</td>)}</tr>)}</tbody></table><div className="text-[8px] mt-2" style={{color:REPORT_THEME.muted}}>Xem trước 6/{rows.length} dòng • File Excel dùng chính màu, viền, tiêu đề và thứ tự cột của Preview này.</div></div></div>
+      <div><div className="flex items-center gap-2 mb-2"><SlidersHorizontal size={15}/><div className="text-[13px] font-semibold">Xem trước mẫu báo cáo</div></div><div className="rounded-lg bg-white p-4 overflow-auto max-h-[520px]" style={{border:`1px solid ${TOKENS.border}`}}><div className="text-[10px] font-extrabold uppercase" style={{color:REPORT_THEME.brand}}>{String(companyName||"MYHL").toUpperCase()}</div><div className="text-center font-extrabold text-[15px] uppercase mt-1 mb-1">{job.title}</div><div className="text-center text-[9px] mb-3" style={{color:REPORT_THEME.muted}}>Ngày xuất: {new Date().toLocaleString("vi-VN")}</div><table className="border-collapse text-[8px]" style={{tableLayout:"fixed",width:"max-content",minWidth:"100%"}}><thead><tr>{chosen.map((h,i)=><th key={i} className="p-1 text-white text-center font-bold" style={{background:REPORT_THEME.brand,border:`1px solid ${REPORT_THEME.border}`,minWidth:Math.max(72,Math.min(180,String(h||"").length*8+28))}}>{h}</th>)}</tr></thead><tbody>{rows.slice(0,6).map((r,ri)=><tr key={ri} style={{background:ri%2?REPORT_THEME.brandSoft:REPORT_THEME.paper}}>{r.map((c,ci)=><td key={ci} className="p-1 align-top" style={{border:`1px solid ${REPORT_THEME.border}`,textAlign:typeof c==="number"?"right":"left",whiteSpace:"normal"}}>{reportExportDisplay(c)}</td>)}</tr>)}</tbody></table><div className="text-[8px] mt-2" style={{color:REPORT_THEME.muted}}>Xem trước 6/{rows.length} dòng • File Excel dùng chính màu, viền, tiêu đề và thứ tự cột của Preview này.</div></div></div>
     </div>
     <div className="flex justify-between items-center mt-5 pt-4" style={{borderTop:`1px solid ${TOKENS.border}`}}><div className="text-[11px]" style={{color:TOKENS.muted}}>Đã chọn <b>{selected.length}/{job.headers.length}</b> cột.</div><div className="flex gap-2"><Btn onClick={onClose}>Hủy</Btn><Btn kind="primary" icon={job.mode==="excel"?FileDown:Printer} onClick={run}>{job.mode==="excel"?"Xuất Excel đúng mẫu":"Xuất PDF theo mẫu"}</Btn></div></div>
   </Modal>
