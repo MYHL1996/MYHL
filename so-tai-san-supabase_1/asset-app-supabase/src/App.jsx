@@ -171,7 +171,7 @@ function reportCellHtml(value, index, isHeader, widths) {
   const style = isHeader
     ? `width:${widths[index]}px;min-width:${widths[index]}px;background:${REPORT_THEME.brand};color:#fff;border:1px solid ${REPORT_THEME.border};padding:7px 6px;text-align:center;vertical-align:middle;font-weight:700;white-space:normal;`
     : `width:${widths[index]}px;min-width:${widths[index]}px;border:1px solid ${REPORT_THEME.border};padding:6px 6px;vertical-align:top;white-space:normal;${numeric ? "text-align:right;mso-number-format:'#,##0.###';" : "text-align:left;"}`;
-  return `<${isHeader ? "th" : "td"}${numeric ? ` x:num="${raw}"` : ""} style="${style}">${escapeHtml(raw)}</${isHeader ? "th" : "td"}>`;
+  return `<${isHeader ? "th" : "td"}${numeric ? ` x:num="${raw}"` : ""} style="${style}">${escapeHtml(numeric ? reportExportDisplay(raw) : raw)}</${isHeader ? "th" : "td"}>`;
 }
 
 function buildStyledExcelHtml(filename, title, headers, rows, companyName) {
@@ -654,6 +654,25 @@ function snapshotOf(d) {
   return d;
 }
 
+// Chỉ giữ nhật ký thao tác trong 3 tháng lịch gần nhất.
+// Không xóa chứng từ, giao dịch, FIFO, lịch sử sửa chữa hoặc dữ liệu phục hồi.
+function trimActivityLogThreeMonths(list, now = new Date()) {
+  if (!Array.isArray(list)) return [];
+  const cutoff = new Date(now.getTime());
+  const originalDay = cutoff.getDate();
+  cutoff.setDate(1);
+  cutoff.setMonth(cutoff.getMonth() - 3);
+  const lastDay = new Date(cutoff.getFullYear(), cutoff.getMonth() + 1, 0).getDate();
+  cutoff.setDate(Math.min(originalDay, lastDay));
+  const threshold = cutoff.getTime();
+  return list.filter(entry => {
+    const raw = entry?.date || entry?.createdAt || entry?.created_at;
+    const timestamp = raw ? new Date(raw).getTime() : NaN;
+    // Nhật ký thiếu ngày không xóa tự động: cần đối soát riêng.
+    return !Number.isFinite(timestamp) || timestamp >= threshold;
+  });
+}
+
 /* ============================== STORAGE HOOK ============================== */
 
 function useAppData(enabled) {
@@ -708,6 +727,9 @@ function useAppData(enabled) {
   }, [enabled]);
 
   const persist = useCallback(async (next) => {
+    // Dọn nhật ký trên mọi lần lưu nghiệp vụ; các mảng nghiệp vụ khác giữ nguyên.
+    // Đừng ghi dữ liệu đã xóa trở lại vì dùng `next` chưa lọc.
+    next = { ...next, activityLog: trimActivityLogThreeMonths(next.activityLog) };
     const previous = data;
     setDataState(next);
     setSaving(true);
@@ -1093,7 +1115,7 @@ export default function AssetManagementApp() {
   const projectName = (id) => data.projects.find((e) => e.id === id)?.name || "—";
   const assetsById = Object.fromEntries(data.assets.map((a) => [a.id, a]));
 
-  const logAction = (list, action, meta={}) => [...list, { id: uid("lg"), date: nowIso(), user: currentUser.name, action, ...meta }];
+  const logAction = (list, action, meta={}) => trimActivityLogThreeMonths([...(Array.isArray(list) ? list : []), { id: uid("lg"), date: nowIso(), user: currentUser.name, action, ...meta }]);
 
   const notify = (text) => setToast(text);
 
