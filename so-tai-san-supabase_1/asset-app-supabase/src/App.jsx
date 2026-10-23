@@ -1331,15 +1331,23 @@ export default function AssetManagementApp() {
         voucherNo === String(baseOld.voucherNo || "") &&
         date === String(baseOld.date || "").slice(0, 10) &&
         locationName === (baseOld.locationName || (baseOld.projectId ? projectName(baseOld.projectId) : baseOld.warehouseName || "Kho trung tâm")) &&
-        form.projectId === baseOld.projectId &&
-        operationType === baseOld.operationType;
+        String(form.projectId) === String(baseOld.projectId) &&
+        operationType === (baseOld.operationType || "mua_moi");
       const sameIdentity = sameSet && items.every(i => {
         const old = byId.get(String(i.originalWarehouseRowId));
         return old && normalizeText(i.itemCode || "") === normalizeText(old.itemCode || "") &&
-          String(i.assetId || "") === String(old.assetId || "") &&
           normalizeText(i.ownership || "TMC") === normalizeText(old.ownership || "TMC") &&
           Math.abs(safeNumber(i.unitCost) - safeNumber(old.unitCost)) < 0.0000001;
       });
+      // Never fall through to rebuilding a 196-line receipt if its unchanged
+      // lines cannot be matched. Require explicit reconciliation instead.
+      if (!sameSet || !unchangedHeader || !sameIdentity) {
+        const reason = !sameSet ? "ID dòng gốc không khớp" :
+          !unchangedHeader ? "thông tin chung của phiếu đã thay đổi" :
+          "mã, nguồn gốc hoặc đơn giá của một dòng không khớp dữ liệu gốc";
+        notify(`Chưa lưu phiếu: ${reason}. Hệ thống không được tự tạo lại các dòng không sửa.`);
+        return false;
+      }
       if (unchangedHeader && sameIdentity) {
         const changed = items.filter(i => Math.abs(roundMYHLQuantity(i.quantity) - roundMYHLQuantity(byId.get(String(i.originalWarehouseRowId)).quantity)) > 0.0000001);
         if (changed.length) {
