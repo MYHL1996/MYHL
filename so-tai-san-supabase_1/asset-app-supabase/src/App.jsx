@@ -1383,14 +1383,27 @@ export default function AssetManagementApp() {
       return `${code}¦${normalizeText(w.ownership||"TMC")}¦${loc}`;
     };
     const removedRows=originalRows.filter(isEditedRow);
-    const affectedKeys=new Set([...removedRows,...allRows].map(ledgerDimension));
-    // Do not treat unrelated dimensions as modified when old and new events match.
-    const eventSignature=w=>`${ledgerDimension(w)}¦${String(w.date||"").slice(0,10)}¦${w.type}¦${Number(w.quantity)||0}`;
-    const oldEvents=new Map(),newEvents=new Map();
-    for(const w of removedRows){const k=eventSignature(w);oldEvents.set(k,(oldEvents.get(k)||0)+1)}
-    for(const w of allRows){const k=eventSignature(w);newEvents.set(k,(newEvents.get(k)||0)+1)}
-    const unchangedEvents=[...new Set([...oldEvents.keys(),...newEvents.keys()])].every(k=>(oldEvents.get(k)||0)===(newEvents.get(k)||0));
-    if(unchangedEvents)affectedKeys.clear();
+    // Only validate dimensions whose ledger events actually changed. A large
+    // edited voucher may contain hundreds of untouched assets: rebuilding
+    // those rows with new IDs must not make their old deficits block saving.
+    const eventSignature=w=>`${ledgerDimension(w)}¦${String(w.date||"").slice(0,10)}¦${w.type}¦${Math.round(safeNumber(w.quantity)*1000)/1000}`;
+    const oldEventsByKey=new Map(),newEventsByKey=new Map();
+    const addEvent=(target,w)=>{
+      const dim=ledgerDimension(w),signature=eventSignature(w);
+      if(!target.has(dim))target.set(dim,new Map());
+      const events=target.get(dim);
+      events.set(signature,(events.get(signature)||0)+1);
+    };
+    removedRows.forEach(w=>addEvent(oldEventsByKey,w));
+    allRows.forEach(w=>addEvent(newEventsByKey,w));
+    const affectedKeys=new Set();
+    for(const dim of new Set([...oldEventsByKey.keys(),...newEventsByKey.keys()])){
+      const before=oldEventsByKey.get(dim)||new Map();
+      const after=newEventsByKey.get(dim)||new Map();
+      const same=[...new Set([...before.keys(),...after.keys()])]
+        .every(sig=>(before.get(sig)||0)===(after.get(sig)||0));
+      if(!same)affectedKeys.add(dim);
+    }
     const baselineMinima=ledgerSnapshot(originalRows.filter(w=>affectedKeys.has(ledgerDimension(w))));
     const proposedMinima=ledgerSnapshot([...currentRows,...allRows].filter(w=>affectedKeys.has(ledgerDimension(w))));
     for(const [key,next] of proposedMinima){
