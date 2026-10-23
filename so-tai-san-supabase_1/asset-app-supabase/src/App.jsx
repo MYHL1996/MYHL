@@ -1286,7 +1286,7 @@ export default function AssetManagementApp() {
   const addWarehouseTx = async (form, editMeta = null) => {
     // Khi sửa phiếu: loại toàn bộ bundle cũ khỏi phép tính tồn/FIFO trước,
     // sau đó dựng lại phiếu từ form mới. Với chuyển kho, bundle gồm cả dòng xuất + nhập đối ứng.
-    const items = Array.isArray(form.items) ? form.items.filter(x=>x.assetId && Number(x.quantity)>0) : [form];
+    const items = Array.isArray(form.items) ? form.items.filter(x=>x.assetId && roundMYHLQuantity(x.quantity)>0) : [form];
     if (!items.length) { notify("Phiếu chưa có tài sản"); return false; }
     const editIds = new Set(Array.isArray(editMeta?.rowIds) ? editMeta.rowIds : []);
     // Never permit the edit bundle to remove rows belonging to another voucher.
@@ -1349,7 +1349,29 @@ export default function AssetManagementApp() {
     }
     if(!rows.length) { notify("Không có dòng tài sản hợp lệ"); return false; }
 
-    const allRows=[...rows,...pairedRows];
+    // Giữ ID các dòng có nội dung tồn kho không đổi khi sửa phiếu.
+    // Tránh đảo thứ tự hạch toán trong cùng ngày vì ID ngẫu nhiên mới.
+    const oldBundleRows=originalRows.filter(isEditedRow);
+    const stableRowKey=w=>[
+      String(w.type||""),String(w.date||"").slice(0,10),
+      ledgerCodeForRow(w,data.assets||[])||normalizeText(w.itemCode||"")||String(w.assetId||""),
+      normalizeText(w.ownership||"TMC"),
+      w.locationName||(w.projectId?projectName(w.projectId):w.warehouseName||"Kho trung tâm"),
+      Math.round(safeNumber(w.quantity)*1000),
+    ].join("¦");
+    const unchangedPools=new Map();
+    oldBundleRows.forEach(w=>{
+      const key=stableRowKey(w);
+      if(!unchangedPools.has(key))unchangedPools.set(key,[]);
+      unchangedPools.get(key).push(w);
+    });
+    const preserveUnchangedIdentity=w=>{
+      const pool=unchangedPools.get(stableRowKey(w));
+      const previous=pool?.shift();
+      // Preserve the old FIFO references as well as ID on genuinely unchanged lines.
+      return previous?{...w,id:previous.id,fifoAllocations:previous.fifoAllocations||w.fifoAllocations}:w;
+    };
+    const allRows=[...rows,...pairedRows].map(preserveUnchangedIdentity);
 
     // v50: Chỉ chặn âm tồn mới do phiếu này gây ra. Không để lỗi lịch sử
     // của mã/kho khác ngăn người dùng sửa một chứng từ không liên quan.
