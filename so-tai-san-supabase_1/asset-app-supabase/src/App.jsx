@@ -313,31 +313,33 @@ const safeText = (v, fallback = "") => {
 // Excel numeric cells are already numbers; text can be vi-VN or en-US.
 const parseMYHLNumber = (value) => {
   if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
-  if (value == null || String(value).trim() === "") return NaN;
-  let s = String(value).trim().replace(/\\s|\\u00a0/g, "");
-  if (!/^[+-]?[\\d.,]+$/.test(s)) return NaN;
-  const dots = (s.match(/\\./g) || []).length;
-  const commas = (s.match(/,/g) || []).length;
-  if (dots && commas) {
-    // Dấu phân cách xuất hiện cuối cùng được coi là dấu thập phân.
-    const decimal = s.lastIndexOf(",") > s.lastIndexOf(".") ? "," : ".";
-    const thousands = decimal === "," ? "." : ",";
-    const parts = s.split(decimal);
-    if (parts.length !== 2 || !/^\\d{1,3}(?:[.,]\\d{3})*$/.test(parts[0].replace(/^[+-]/, "")) ||
-        !/^\\d+$/.test(parts[1])) return NaN;
-    s = s.split(thousands).join("").replace(decimal, ".");
-  } else if (dots > 1 || commas > 1) {
-    const sep = dots ? "." : ",";
-    const parts = s.replace(/^[+-]/, "").split(sep);
-    if (!parts.every((p,i) => i === 0 ? /^\\d{1,3}$/.test(p) : /^\\d{3}$/.test(p))) return NaN;
-    s = s.split(sep).join("");
-  } else if (commas === 1) {
-    s = s.replace(",", ".");
-  } else if (dots === 1 && /^[-+]?\\d{1,3}\\.\\d{3}$/.test(s)) {
-    // "1.234" is ambiguous: keep as decimal to avoid silent x1000 corruption.
-    // Prefer numeric Excel cells or explicit "1.234,00" for thousands.
+  if (value == null) return NaN;
+  let s = String(value).trim().replace(/[\s\u00a0]/g, "");
+  if (!s || !/^[+-]?[\d.,]+$/.test(s)) return NaN;
+  const dot = s.lastIndexOf("."), comma = s.lastIndexOf(",");
+  if (dot >= 0 && comma >= 0) {
+    const dec = comma > dot ? "," : ".";
+    const group = dec === "," ? "." : ",";
+    const parts = s.split(dec);
+    if (parts.length !== 2 || !/^\d+$/.test(parts[1])) return NaN;
+    const sign = /^[+-]/.test(parts[0]) ? parts[0][0] : "";
+    const integer = sign ? parts[0].slice(1) : parts[0];
+    const grouped = integer.split(group);
+    if (grouped.length > 1 && !( /^\d{1,3}$/.test(grouped[0]) && grouped.slice(1).every(p=>/^\d{3}$/.test(p)) )) return NaN;
+    s = sign + grouped.join("") + "." + parts[1];
+  } else if (comma >= 0) {
+    if ((s.match(/,/g)||[]).length === 1) s = s.replace(",", ".");
+    else {
+      const parts=s.replace(/^[+-]/,"").split(",");
+      if (!/^\d{1,3}$/.test(parts[0]) || !parts.slice(1).every(p=>/^\d{3}$/.test(p))) return NaN;
+      s=s.replace(/,/g,"");
+    }
+  } else if (dot >= 0 && (s.match(/\./g)||[]).length > 1) {
+    const parts=s.replace(/^[+-]/,"").split(".");
+    if (!/^\d{1,3}$/.test(parts[0]) || !parts.slice(1).every(p=>/^\d{3}$/.test(p))) return NaN;
+    s=s.replace(/\./g,"");
   }
-  const n = Number(s);
+  const n=Number(s);
   return Number.isFinite(n) ? n : NaN;
 };
 const safeNumber = (v, fallback = 0) => {
