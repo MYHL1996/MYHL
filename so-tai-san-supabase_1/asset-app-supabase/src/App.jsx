@@ -1315,6 +1315,86 @@ export default function AssetManagementApp() {
     const prefix=prefixMap[operationType] || (form.type === "nhap" ? "PN" : "PX"), dateKey=date.replaceAll("-","");
     const seq=currentRows.filter(w=>String(w.voucherNo||"").startsWith(`${prefix}-${dateKey}-`)).length+1;
     const voucherNo=form.voucherNo?.trim() || `${prefix}-${dateKey}-${String(seq).padStart(3,"0")}`;
+    // v4: FAST PATH cho thao tác chỉ sửa SỐ LƯỢNG trên phiếu NHẬP.
+    // Không tái dựng 196 dòng, không tái cấp ID, không thay đổi nguồn gốc/FIFO của mã khác.
+    // Các thay đổi nghiệp vụ khác vẫn đi qua quy trình tổng quát bên dưới.
+    if (editIds.size && form.type === "nhap" && operationType !== "luan_chuyen_den" && operationType !== "thu_hoi_sua_chua") {
+      const originals = originalRows.filter(isEditedRow);
+      const byId = new Map(originals.map(w => [String(w.id), w]));
+      const itemIds = items.map(i => String(i.originalWarehouseRowId || ""));
+      const originalIds = originals.map(w => String(w.id));
+      const sameSet = itemIds.length === originalIds.length &&
+        new Set(itemIds).size === itemIds.length &&
+        originalIds.every(id => itemIds.includes(id));
+      const baseOld = originals[0];
+      const unchangedHeader = baseOld &&
+        voucherNo === String(baseOld.voucherNo || "") &&
+        date === String(baseOld.date || "").slice(0, 10) &&
+        locationName === (baseOld.locationName || (baseOld.projectId ? projectName(baseOld.projectId) : baseOld.warehouseName || "Kho trung tâm")) &&
+        form.projectId === baseOld.projectId &&
+        operationType === baseOld.operationType;
+      const sameIdentity = sameSet && items.every(i => {
+        const old = byId.get(String(i.originalWarehouseRowId));
+        return old && normalizeText(i.itemCode || "") === normalizeText(old.itemCode || "") &&
+          String(i.assetId || "") === String(old.assetId || "") &&
+          normalizeText(i.ownership || "TMC") === normalizeText(old.ownership || "TMC") &&
+          Math.abs(safeNumber(i.unitCost) - safeNumber(old.unitCost)) < 0.0000001;
+      });
+      if (unchangedHeader && sameIdentity) {
+        const changed = items.filter(i => Math.abs(roundMYHLQuantity(i.quantity) - roundMYHLQuantity(byId.get(String(i.originalWarehouseRowId)).quantity)) > 0.0000001);
+        if (changed.length) {
+          const replacements = new Map();
+          for (const item of changed) {
+            const old = byId.get(String(item.originalWarehouseRowId));
+            const qty = roundMYHLQuantity(item.quantity);
+            if (!Number.isFinite(qty) || qty <= 0) {
+              notify(`Số lượng mã ${old.itemCode || ""} không hợp lệ.`); return false;
+            }
+            replacements.set(String(old.id), {...old, quantity:qty, total:qty * safeNumber(old.unitCost)});
+          }
+          const updated = originalRows.map(w => isEditedRow(w) && replacements.has(String(w.id))
+            ? replacements.get(String(w.id)) : w);
+          // Chỉ kiểm tra mã/kho/nguồn gốc đã sửa. So sánh tồn thấp nhất trước và sau,
+          // không dùng lỗi lịch sử của mã khác để chặn sửa phiếu.
+          const dimension = w => `${ledgerCodeForRow(w,data.assets||[]) || normalizeText(w.itemCode||"") || String(w.assetId||"")}¦${normalizeText(w.ownership||"TMC")}¦${w.locationName || (w.projectId ? projectName(w.projectId) : w.warehouseName || "Kho trung tâm")}`;
+          const touched = new Set([...replacements.values()].map(dimension));
+          const minBalances = source => {
+            const balance = new Map(), minima = new Map();
+            const ordered = source.filter(w => touched.has(dimension(w))).slice().sort((a,b) => {
+              const da=String(a.date||""), db=String(b.date||"");
+              if(da!==db)return da.localeCompare(db);
+              if(a.type!==b.type)return a.type==="nhap"?-1:1;
+              return String(a.id||"").localeCompare(String(b.id||""));
+            });
+            for(const w of ordered){
+              const key=dimension(w);
+              const next=(balance.get(key)||0)+(w.type==="nhap"?1:-1)*roundMYHLQuantity(w.quantity);
+              balance.set(key,next);
+              minima.set(key,Math.min(minima.get(key)??0,next));
+            }
+            return minima;
+          };
+          const before=minBalances(originalRows), after=minBalances(updated);
+          for(const key of touched){
+            const oldMin=before.get(key)??0, newMin=after.get(key)??0;
+            if(newMin < -0.0000001 && newMin < oldMin-0.0000001){
+              notify(`Không thể giảm số lượng nhập: ${key.split("¦")[0]} phát sinh/tăng âm tồn. Trước: ${oldMin}; sau: ${newMin}.`);
+              return false;
+            }
+          }
+          // Giữ nguyên các giao dịch của dòng khác. Chỉ điều chỉnh giá trị nhật ký
+          // khi có thể ghép một-một bằng ID dòng; không tạo lại toàn bộ nhật ký phiếu.
+          const result=await setData({...data,warehouse:updated,
+            activityLog:logAction(data.activityLog,`Sửa số lượng ${voucherNo}: ${changed.map(i=>`${i.itemCode}: ${byId.get(String(i.originalWarehouseRowId)).quantity} → ${roundMYHLQuantity(i.quantity)}`).join("; ")}`)});
+          if(!result?.ok){notify(result?.error || "Không lưu được chứng từ. Dữ liệu chưa thay đổi.");return false;}
+          notify(`Đã lưu ${changed.length} dòng thay đổi trong ${voucherNo}; các dòng khác được giữ nguyên.`);
+          return true;
+        }
+        // Không có số lượng thay đổi: tránh ghi lại chứng từ một cách vô ích.
+        notify(`Phiếu ${voucherNo} không có thay đổi số lượng.`);
+        return true;
+      }
+    }
     const rows=[], pairedRows=[], transferId=operationType === "luan_chuyen_di" ? (editMeta?.transferId || uid("tr")) : "";
 
     // v54: identify untouched voucher lines BEFORE running FIFO or rebuilding them.
