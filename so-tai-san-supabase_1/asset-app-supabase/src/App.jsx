@@ -1317,10 +1317,32 @@ export default function AssetManagementApp() {
     const voucherNo=form.voucherNo?.trim() || `${prefix}-${dateKey}-${String(seq).padStart(3,"0")}`;
     const rows=[], pairedRows=[], transferId=operationType === "luan_chuyen_di" ? (editMeta?.transferId || uid("tr")) : "";
 
+    // v54: identify untouched voucher lines BEFORE running FIFO or rebuilding them.
+    // Do not recalculate historical issues merely because a different line was edited.
+    const originalById=new Map(originalRows.filter(isEditedRow).map(w=>[String(w.id),w]));
+    const sameQuantity=(a,b)=>Math.abs(roundMYHLQuantity(a)-roundMYHLQuantity(b))<0.0000001;
+    const unchangedOriginalFor=(item)=>{
+      const old=originalById.get(String(item.originalWarehouseRowId||""));
+      if(!old)return null;
+      if(normalizeText(item.itemCode||"")!==normalizeText(old.itemCode||""))return null;
+      if(normalizeText(item.ownership||"TMC")!==normalizeText(old.ownership||"TMC"))return null;
+      if(!sameQuantity(item.quantity,old.quantity))return null;
+      if(form.type!==old.type || date!==String(old.date||"").slice(0,10))return null;
+      if(locationName!==(old.locationName||(old.projectId?projectName(old.projectId):old.warehouseName||"Kho trung tâm")))return null;
+      if(form.type==="nhap" && Math.abs(safeNumber(item.unitCost)-safeNumber(old.unitCost))>0.0000001)return null;
+      return old;
+    };
     for (const item of items) {
+      const unchanged=editIds.size?unchangedOriginalFor(item):null;
+      if(unchanged && operationType===unchanged.operationType){
+        // Preserve row ID, origin, price and FIFO allocations exactly.
+        // Common voucher metadata may still be edited without changing inventory.
+        rows.push({...unchanged,voucherNo,documentDate:parseDateValue(form.documentDate||date),receiver:form.receiver||"",supplier:form.supplier||"",description:form.description||form.note||"",note:form.note||"",address:form.address||"",referenceNo:form.referenceNo||"",attachedDoc:form.attachedDoc||"",attachments:Array.isArray(form.attachments)?form.attachments:[],transportPerson:form.transportPerson||"",vehicle:form.vehicle||"",orderNo:form.orderNo||""});
+        continue;
+      }
       const codeKey=normalizeText(item.itemCode||"");
       const asset=(codeKey ? (data.assets||[]).find(a=>normalizeText(a.code||"")===codeKey) : null) || assetsById[item.assetId];
-      if(!asset) continue;
+      if(!asset) { notify(`Không tìm thấy mã tài sản ${item.itemCode||item.assetId||""}. Không lưu để tránh mất dòng chứng từ.`);return false; }
       const qty=roundMYHLQuantity(item.quantity), enteredUnitCost=Number(item.unitCost)||0;
       if (!Number.isFinite(qty) || qty <= 0) { notify(`Số lượng mã ${asset.code||""} không hợp lệ hoặc sau làm tròn bằng 0. Vui lòng nhập tối đa 3 số thập phân.`); return false; }
       const fifoLotsFor=(assetId,loc,untilDate,origin)=>{
@@ -1559,6 +1581,7 @@ export default function AssetManagementApp() {
         const exactByCode = data.assets.find(a => normalizeText(a.code) === normalizeText(snapshotCode));
         return {
         id: uid("line"),
+        originalWarehouseRowId:w.id,
         // v43: khi Sửa phiếu, mã snapshot đang hiển thị trên chứng từ có quyền ưu tiên tuyệt đối.
         // Không dùng assetId lịch sử nếu assetId đó trỏ sang mã khác.
         assetId: exactByCode?.id || (resolveWarehouseAsset(w, data.assets)||{}).id || w.assetId,
