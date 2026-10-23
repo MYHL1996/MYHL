@@ -3217,7 +3217,7 @@ function WarehouseTxModal({ assets, projects, warehouse = [], suppliers = [], on
   const enteredTotal=f.items.reduce((n,x)=>n+(Number(x.quantity)||0)*(Number(x.unitCost)||0),0);
   const Box=({legend,children})=><fieldset className="rounded-md p-3" style={{border:`1px solid ${TOKENS.border}`,background:TOKENS.surface}}><legend className="px-2 text-[12px] font-semibold" style={{color:TOKENS.brand}}>{legend}</legend>{children}</fieldset>;
   return <Modal title={title||"Phiếu kho"} onClose={onClose} wide>
-    {initialData&&<div className="mb-3 rounded-md px-3 py-2 text-[12px]" style={{background:TOKENS.goldSoft,border:`1px solid ${TOKENS.gold}33`,color:TOKENS.ink}}><b>Chế độ sửa chứng từ:</b> Khi lưu, hệ thống thay thế toàn bộ phiếu cũ, tính lại FIFO/giá vốn và kiểm tra không để âm tồn ở các chứng từ phát sinh sau đó.</div>}
+    {initialData&&<div className="mb-3 rounded-md px-3 py-2 text-[12px]" style={{background:TOKENS.goldSoft,border:`1px solid ${TOKENS.gold}33`,color:TOKENS.ink}}><b>Chế độ sửa chứng từ:</b> Khi lưu, hệ thống tính lại phiếu và kiểm tra các mã/kho/nguồn gốc thực sự thay đổi. Âm tồn lịch sử của mã không liên quan không chặn lưu phiếu.</div>}
     <div className="grid grid-cols-12 gap-3 mb-3">
       <div className="col-span-9">
         <Box legend="Thông tin chung">
