@@ -1633,6 +1633,9 @@ export default function AssetManagementApp() {
 
     const all = Array.isArray(data.warehouse) ? data.warehouse : [];
     const isTransfer = row.operationType === "luan_chuyen_di" || row.operationType === "luan_chuyen_den" || !!row.transferId;
+    const hasLinkedOutgoing = row.type === "nhap" && row.transferId &&
+      all.some(w => w.type === "xuat" && w.operationType === "luan_chuyen_di" && w.transferId === row.transferId);
+    const editAsOutgoingTransfer = row.type === "xuat" || !!hasLinkedOutgoing;
 
     let related;
     if (isTransfer && row.transferId) {
@@ -1651,7 +1654,7 @@ export default function AssetManagementApp() {
     if (!related.length) related = [row];
 
     // Với chuyển kho chỉ dùng các dòng XUẤT làm dòng hàng gốc; các dòng NHẬP đối ứng sẽ được tạo lại tự động.
-    const primary = isTransfer
+    const primary = isTransfer && editAsOutgoingTransfer
       ? related.filter(w => w.type === "xuat" && (w.operationType === "luan_chuyen_di" || !w.operationType))
       : related.filter(w => w.type === row.type);
     const rawSourceRows = primary.length ? primary : [row];
@@ -1675,7 +1678,7 @@ export default function AssetManagementApp() {
 
     const initialData = {
       type: base.type === "xuat" ? "xuat" : "nhap",
-      operationType: isTransfer ? "luan_chuyen_di" : (base.operationType || (base.type === "xuat" ? "su_dung_cong_trinh" : "mua_moi")),
+      operationType: isTransfer && editAsOutgoingTransfer ? "luan_chuyen_di" : (base.operationType || (base.type === "xuat" ? "su_dung_cong_trinh" : "mua_moi")),
       voucherNo: base.voucherNo || "",
       date: parseDateValue(base.date),
       documentDate: parseDateValue(base.documentDate || base.date),
@@ -1710,7 +1713,7 @@ export default function AssetManagementApp() {
         itemName: safeText(w.itemName || exactByCode?.name || ""),
         quantity: Number(w.quantity || 0),
         // Phiếu xuất/chuyển luôn tính lại giá vốn FIFO khi lưu.
-        unitCost: base.type === "nhap" && !isTransfer ? Number(w.unitCost || 0) : 0,
+        unitCost: base.type === "nhap" && !editAsOutgoingTransfer ? Number(w.unitCost || 0) : 0,
         ownership: w.ownership || "TMC",
       };
       }),
@@ -1720,7 +1723,7 @@ export default function AssetManagementApp() {
       type: "warehouseEdit",
       title: isTransfer ? `Sửa phiếu chuyển kho ${base.voucherNo || ""}` : `Sửa ${base.type === "nhap" ? "phiếu nhập" : "phiếu xuất"} ${base.voucherNo || ""}`,
       fixedType: initialData.type,
-      fixedOperation: isTransfer ? "luan_chuyen_di" : "",
+      fixedOperation: isTransfer ? (editAsOutgoingTransfer ? "luan_chuyen_di" : "luan_chuyen_den") : "",
       initialData,
       editMeta: {
         rowIds: related.map(w => w.id),
@@ -3114,7 +3117,9 @@ function WarehouseHub({ warehouse = [], assets = [], projects = [], settings = {
     if(filter.projectId && safeText(w.projectId||a.projectId)!==filter.projectId)return false;
     if(filter.locationName && getLocation(w)!==filter.locationName)return false;
     if(filter.supplier && safeText(w.supplier)!==filter.supplier && safeText(w.repairVendor)!==filter.supplier)return false;
-    if(filter.operationType && safeText(w.operationType)!==filter.operationType)return false;
+    if(filter.operationType && safeText(w.operationType)!==filter.operationType &&
+      !(tab==="transfer" && (filter.operationType==="luan_chuyen_di"||filter.operationType==="luan_chuyen_den") &&
+        (w.operationType==="luan_chuyen_di"||w.operationType==="luan_chuyen_den")))return false;
     if(normalizedWarehouseQuery && !(searchMode==="material"?itemMatchesQuery(w):voucherMatchesQuery(w))) return false;
     return true;
   };
@@ -3166,7 +3171,14 @@ function WarehouseHub({ warehouse = [], assets = [], projects = [], settings = {
   const downloadTemplate=()=>downloadExcelTemplate("Mau_Import_Phieu_Nhap_Xuat_Kho",["Loại phiếu","Loại nghiệp vụ","Số phiếu","Ngày tháng","Tên tài sản","Mã hàng","Kho/Công trình","Kho/Công trình đối ứng","Nhà cung cấp","Đơn vị sửa chữa","Người giao/nhận","Số lượng","Đơn vị tính","Đơn giá","Diễn giải","Ghi chú"],[["Nhập kho","Mua mới bên ngoài","PN-20260824-001","24/08/2026","Máy khoan mẫu","TS-001",safeProjects[0]?.name||"","",supplierNames[0]||"Nhà cung cấp A","","Nguyễn Văn A",1,"Cái",3500000,"Nhập mua mới",""]]);
   const filterProps={filter,setFilter,categories,groups:groupsList,ownerships,projects:safeProjects,locations,suppliers:supplierNames,operations:operationOptions,showStatus:(tab==="in"||tab==="out"||tab==="transfer")};
   const visibleType=tab==="in"?"nhap":"xuat";
-  const visibleRows=tab==="transfer"?filteredTx.filter(w=>w.type==="xuat"&&w.operationType==="luan_chuyen_di"):filteredTx.filter(w=>w.type===visibleType&&w.operationType!=="luan_chuyen_di"&&w.operationType!=="luan_chuyen_den");
+  // Chuyển kho: cả phiếu xuất chuyển đi và phiếu nhập chuyển đến lịch sử.
+  // Chỉ ẩn dòng nhập đối ứng khi có dòng xuất cùng transferId; không ẩn
+  // phiếu nhập độc lập chưa được liên kết, không tạo thêm biến động kho.
+  const transferOutgoingIds=new Set(safeWarehouse.filter(w=>w.type==="xuat"&&w.operationType==="luan_chuyen_di"&&w.transferId).map(w=>String(w.transferId)));
+  const visibleRows=tab==="transfer"
+    ? filteredTx.filter(w=>(w.type==="xuat"&&w.operationType==="luan_chuyen_di") ||
+        (w.type==="nhap"&&w.operationType==="luan_chuyen_den"&&(!w.transferId||!transferOutgoingIds.has(String(w.transferId)))))
+    : filteredTx.filter(w=>w.type===visibleType&&w.operationType!=="luan_chuyen_di"&&w.operationType!=="luan_chuyen_den");
   const verifiedVisibleRows=normalizedWarehouseQuery&&searchMode==="material"?visibleRows.filter(itemMatchesQuery):visibleRows;
   const allVisible=verifiedVisibleRows.length>0&&verifiedVisibleRows.every(w=>selectedRows.includes(w.id));
   const selectedVisibleRows=verifiedVisibleRows.filter(w=>selectedRows.includes(w.id));
